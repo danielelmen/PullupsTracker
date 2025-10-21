@@ -38,12 +38,14 @@ st.write(f"Du er logget ind som: {user}")
 
 ################ Google sheets test
 
-SHEET_TITLE = "PullupsSheet"   # your Google Sheet name
-TAB_NAME    = "daniel"            # the tab name
+SHEET_TITLE = "PullupsSheet"  # skal matche din Google Sheet titel
+HEADERS     = ["username","date","pullups","week_start","week_number"]
+
+def monday_of_week(d: dt.date) -> dt.date:
+    return d - dt.timedelta(days=d.weekday())  # mandag=0
 
 @st.cache_resource
-def get_ws():
-    # Build creds from secrets
+def get_client_and_sheet():
     creds = Credentials.from_service_account_info(
         st.secrets["gcp_service_account"],
         scopes=[
@@ -53,44 +55,92 @@ def get_ws():
     )
     gc = gspread.authorize(creds)
     sh = gc.open(SHEET_TITLE)
-    return sh.worksheet(TAB_NAME)
+    return gc, sh
 
-st.title("Pull-up Tracker!")
-
-ws = get_ws()
-
-# Read all
-try:
-    records = ws.get_all_records()
-except gspread.exceptions.APIError as e:
-    st.error("Google Sheets API fejl")
-    st.exception(e)
+def get_user_ws(username: str):
+    """Åbn eller opret fanen der matcher brugernavnet."""
+    _, sh = get_client_and_sheet()
     try:
-        st.write("Response status:", getattr(e, "response", None).status_code)
-        st.write("Response text:", getattr(e, "response", None).text[:500])
-    except Exception:
-        pass
-    st.stop()
-df = pd.DataFrame(records)
-st.subheader("Current data")
-st.dataframe(df if not df.empty else pd.DataFrame(columns=["username","date","pullups","week_start","week_number"]), use_container_width=True)
+        ws = sh.worksheet(username)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title=username, rows=1000, cols=10)
+        ws.update("A1", [HEADERS])  # skriv headers første gang
+    return ws
 
-# Quick write test
-with st.form("write_test"):
-    st.write("Append a test row:")
-    username = st.text_input("username", value="tester")
-    qty = st.number_input("pullups", min_value=1, value=10)
-    submitted = st.form_submit_button("Append")
-    if submitted:
+def ensure_headers(ws):
+    first_row = ws.row_values(1)
+    if not first_row or first_row != HEADERS:
+        ws.update("A1", [HEADERS])
+
+@st.cache_data(ttl=15)
+def read_user_df(ws):
+    """Læs kun brugerens fane, robust mod tomt ark."""
+    ensure_headers(ws)
+    values = ws.get("A1:E10000")  # eksplicit range er mere stabilt end get_all_records
+    if not values:
+        return pd.DataFrame(columns=HEADERS)
+    headers = values[0]
+    rows = values[1:]
+    rows = [r + [""]*(len(headers)-len(r)) for r in rows]
+    rows = [r[:len(headers)] for r in rows]
+    df = pd.DataFrame(rows, columns=headers)
+    if not df.empty:
+        df["pullups"] = pd.to_numeric(df["pullups"], errors="coerce").fillna(0).astype(int)
+    return df
+
+# ---------- Forside: Kun egne data ----------
+user = st.session_state["username"]
+st.title(f"🏋️ Din uge, {user}")
+
+ws = get_user_ws(user)          # <— her låses vi til fanen med brugernavnet
+df = read_user_df(ws)
+
+# Quick log (kun for dig selv)
+with st.form("log_pullups"):
+    qty = st.number_input("Tilføj pullups", min_value=1, step=1)
+    add = st.form_submit_button("Tilføj")
+    if add:
         today = dt.date.today()
-        monday = today - dt.timedelta(days=today.weekday())
         row = [
-            username,
+            user,
             today.isoformat(),
             int(qty),
-            monday.isoformat(),
-            today.isocalendar().week
+            monday_of_week(today).isoformat(),
+            today.isocalendar().week,
         ]
+        ensure_headers(ws)
         ws.append_row(row)
-        st.success("Row appended ✅")
+        st.success(f"Tilføjede {qty} for {user}")
+        st.cache_data.clear()  # opdatér visning
         st.rerun()
+
+# Stats for i dag og denne uge
+today = dt.date.today()
+this_week_start = monday_of_week(today).isoformat()
+
+my_week = pd.DataFrame(columns=df.columns)
+my_day_total = 0
+my_week_total = 0
+
+if not df.empty:
+    my_week = df[df["week_start"] == this_week_start]
+    my_day_total = int(my_week[my_week["date"] == today.isoformat()]["pullups"].sum())
+    my_week_total = int(my_week["pullups"].sum())
+
+remaining = max(500 - my_week_total, 0)
+days_left = max(1, 7 - today.weekday())  # inkl. i dag
+avg_needed = (remaining + days_left - 1) // days_left  # ceil
+
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("I dag", my_day_total)
+col2.metric("Denne uge", my_week_total)
+col3.metric("Til 500", remaining)
+col4.metric("Behov / dag", avg_needed)
+st.progress(min(my_week_total/500, 1.0))
+
+st.subheader("Dine loggede sæt (denne uge)")
+st.dataframe(
+    my_week[["date","pullups"]].sort_values("date", ascending=False).reset_index(drop=True)
+    if not my_week.empty else pd.DataFrame(columns=["date","pullups"]),
+    use_container_width=True
+)
