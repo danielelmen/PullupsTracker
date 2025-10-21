@@ -308,3 +308,69 @@ if st.button("🗑️ Fortryd seneste log"):
             st.rerun()
         else:
             st.warning("Den seneste række ser ikke ud til at være din.")
+
+# --- Ugentlige totaler (all time) ---
+st.subheader("Ugentlige totaler (all time)")
+if df.empty:
+    st.info("Ingen data endnu.")
+else:
+    # Sikr datatyper
+    tmp = df.copy()
+    tmp["pullups"] = pd.to_numeric(tmp["pullups"], errors="coerce").fillna(0).astype(int)
+    # Brug eksisterende week_start (allerede mandag) og beregn iso-år/uge for tydelig label
+    tmp["week_start"] = pd.to_datetime(tmp["week_start"], errors="coerce").dt.date
+    # Fald tilbage hvis week_start mangler/er tom: rekalkulér fra date
+    mask_missing_ws = tmp["week_start"].isna()
+    if mask_missing_ws.any():
+        tmp_date = pd.to_datetime(tmp.loc[mask_missing_ws, "date"], errors="coerce").dt.date
+        tmp.loc[mask_missing_ws, "week_start"] = tmp_date.map(lambda d: monday_of_week(d) if pd.notna(d) else pd.NaT)
+
+    # iso label (år-uge)
+    try:
+        ws_dt = pd.to_datetime(tmp["week_start"])
+        iso_year = ws_dt.dt.isocalendar().year.astype(int)
+        iso_week = ws_dt.dt.isocalendar().week.astype(int)
+    except Exception:
+        # fallback hvis parsning fejler
+        iso_year = pd.Series([None]*len(tmp))
+        iso_week = pd.Series([None]*len(tmp))
+
+    tmp["iso_year"] = iso_year
+    tmp["iso_week"] = iso_week
+
+    weekly = (
+        tmp.groupby(["iso_year", "iso_week", "week_start"], dropna=False)["pullups"]
+        .sum()
+        .reset_index()
+        .sort_values(["week_start"], ascending=False)
+    )
+
+    # Tilføj mål, status og progress for hver uge
+    weekly["goal"] = int(current_goal)
+    weekly["status"] = weekly["pullups"].ge(weekly["goal"]).map({True: "✅ Opnået", False: "⏳ Ikke endnu"})
+    weekly["progress"] = (weekly["pullups"] / weekly["goal"]).clip(upper=1.0)
+
+    # Pæne labels/kolonner
+    weekly["uge"] = weekly.apply(
+        lambda r: f"{int(r['iso_year'])}-W{int(r['iso_week']):02d}" if pd.notna(r["iso_year"]) and pd.notna(r["iso_week"]) else "",
+        axis=1
+    )
+    weekly["uge_start"] = weekly["week_start"].astype(str)
+
+    # Vælg og omdøb kolonner til visning
+    view = weekly[["uge", "uge_start", "pullups", "goal", "status"]].rename(
+        columns={
+            "uge": "Uge",
+            "uge_start": "Uge start (mandag)",
+            "pullups": "Total",
+            "goal": "Mål",
+            "status": "Status",
+        }
+    )
+
+    # Streamlit-tabel
+    st.dataframe(
+        view,
+        use_container_width=True,
+        hide_index=True,
+    )
