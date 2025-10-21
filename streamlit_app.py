@@ -6,24 +6,32 @@ import datetime as dt
 
 ################ Login ####################
 
-def require_login():
-    if "user" in st.session_state and st.session_state["user"]:
-        return st.session_state["user"]
+users = st.secrets.get("users", {})
 
-    st.header("🔐 Login")
-    with st.form("login"):
-        u = st.text_input("Brugernavn").strip().lower()
-        p = st.text_input("Kodeord", type="password")
-        ok = st.form_submit_button("Log ind")
-    if ok:
-        users = st.secrets.get("auth", {}).get("users", {})
-        if u in users and p == users[u]:
-            st.session_state["user"] = u
-            st.success(f"Velkommen, {u}!")
-            st.rerun()
-        else:
-            st.error("Forkert brugernavn eller kodeord.")
-    st.stop()  # Stop resten af appen indtil login er godkendt
+def authenticate():
+    """Håndterer login med en sikker og stabil metode."""
+    if "authenticated" not in st.session_state:
+        st.session_state["authenticated"] = False
+    if "username" not in st.session_state:
+        st.session_state["username"] = ""
+    
+    if not st.session_state["authenticated"]:
+        st.title("Log ind")
+        username = st.text_input("Brugernavn")
+        password = st.text_input("Adgangskode", type="password")
+        
+        if st.button("Login"):
+            if username in users and users[username] == password:
+                st.session_state["authenticated"] = True
+                st.session_state["username"] = username
+                st.success("Login lykkedes! Appen genindlæses...")
+                st.rerun()  # Tvinger en opdatering af appen
+            else:
+                st.error("Forkert brugernavn eller adgangskode")
+        
+        st.stop()
+
+authenticate()
 
 
 ################ Google sheets test
