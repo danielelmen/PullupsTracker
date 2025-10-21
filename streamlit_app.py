@@ -240,7 +240,7 @@ col4.metric("Behov / dag", avg_needed)
 col5.metric("All time", all_time_total)
 st.progress(min(my_week_total / goal, 1.0))
 
-# --- (Valgfrit) vis startdato for all time ---
+# --- Vis startdato for challenge ---
 first_date = None
 if not df.empty and "date" in df.columns:
     try:
@@ -249,7 +249,7 @@ if not df.empty and "date" in df.columns:
         first_date = None
 
 if first_date:
-    st.caption(f"All time tæller fra **{first_date.isoformat()}**")
+    st.caption(f"Pullup challenge startet **{first_date.isoformat()}**")
 
 st.subheader("Dine loggede pullups (denne uge)")
 st.dataframe(
