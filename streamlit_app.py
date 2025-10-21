@@ -292,11 +292,12 @@ with st.sidebar:
 
 # Vises kun hvis brugeren ikke har noget i settings endnu
 if not goal_found:
-    st.info("Tip: Du kan vælge dit ugentlige mål i sidebaren under **Indstillinger**.")
+    st.info("Tip: Første gang du logger på skal du vælge dit ugentlige mål i sidebaren under **Indstillinger**.")
 
 ################ Forside: data & logging ####################
 tab_name = user_tab(user)
-st.title(f"🏋️ Din uge, {user}")
+st.title("💪 Pullups tracker 💪)
+st.caption(f"🏋️ Velkommen {user}")
 
 tab1, tab2 = st.tabs(["Min uge", "Community"])
 with tab1:
@@ -331,7 +332,7 @@ with tab1:
 
     # Quick log (kun for dig selv)
     with st.form("log_pullups"):
-        qty = st.number_input("Tilføj pullups", min_value=1, step=5)
+        qty = st.number_input("Tilføj pullups", min_value=1, step=1)
         add = st.form_submit_button("Tilføj")
         if add:
             today = dt.date.today()
