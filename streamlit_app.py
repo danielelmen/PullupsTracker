@@ -240,6 +240,17 @@ col4.metric("Behov / dag", avg_needed)
 col5.metric("All time", all_time_total)
 st.progress(min(my_week_total / goal, 1.0))
 
+# --- (Valgfrit) vis startdato for all time ---
+first_date = None
+if not df.empty and "date" in df.columns:
+    try:
+        first_date = pd.to_datetime(df["date"]).min().date()
+    except Exception:
+        first_date = None
+
+if first_date:
+    st.caption(f"All time tæller fra **{first_date.isoformat()}**")
+
 st.subheader("Dine loggede pullups (denne uge)")
 st.dataframe(
     my_week[["date","pullups"]].sort_values("date", ascending=False).reset_index(drop=True)
