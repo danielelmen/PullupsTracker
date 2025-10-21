@@ -4,6 +4,45 @@ import pandas as pd
 from google.oauth2.service_account import Credentials
 import datetime as dt
 import re
+from typing import List
+
+@st.cache_data(ttl=60)
+def list_user_tabs() -> List[str]:
+    """Returnér alle data-faner (ekskl. _settings og skjulte)."""
+    _, sh = get_client_and_sheet()
+    titles = [ws.title for ws in sh.worksheets()]
+    return [t for t in titles if t != SETTINGS_SHEET and not t.startswith("_")]
+
+@st.cache_data(ttl=15)
+def read_all_users_df(tab_names: List[str]) -> pd.DataFrame:
+    """Læs alle brugeres data og returnér ét samlet DF med DATA_HEADERS."""
+    if not tab_names:
+        return pd.DataFrame(columns=DATA_HEADERS)
+    frames = []
+    _, sh = get_client_and_sheet()
+    for name in tab_names:
+        try:
+            ws = sh.worksheet(name)
+            values = ws.get("A1:E10000")
+            if not values:
+                continue
+            headers = values[0]
+            rows = values[1:]
+            rows = [r + [""]*(len(headers)-len(r)) for r in rows]
+            rows = [r[:len(headers)] for r in rows]
+            df_i = pd.DataFrame(rows, columns=headers)
+            if not df_i.empty:
+                df_i["pullups"] = pd.to_numeric(df_i["pullups"], errors="coerce").fillna(0).astype(int)
+            frames.append(df_i)
+        except Exception:
+            continue
+    if not frames:
+        return pd.DataFrame(columns=DATA_HEADERS)
+    df = pd.concat(frames, ignore_index=True)
+    for c in DATA_HEADERS:
+        if c not in df.columns:
+            df[c] = "" if c != "pullups" else 0
+    return df[DATA_HEADERS]
 
 # --- UI helper & styles ---
 def format_int(n: int) -> str:
@@ -426,57 +465,59 @@ with tab1:
 with tab2:
     st.header("🌍 Community")
 
-    # --- Data-indsamling ---
+    # --- Hent data ---
     tabs = list_user_tabs()
     all_df = read_all_users_df(tabs)
     settings_df = read_settings_df()
 
-    # Hvis der ikke er data endnu
     if all_df.empty and settings_df.empty:
         st.info("Ingen community-data endnu.")
         st.stop()
 
-    # Normalisering
+    # --- Typer: sørg for at week_start er DATE (ikke string) ---
     if not all_df.empty:
         all_df["pullups"] = pd.to_numeric(all_df["pullups"], errors="coerce").fillna(0).astype(int)
-        all_df["date"] = pd.to_datetime(all_df["date"], errors="coerce").dt.date
         all_df["week_start"] = pd.to_datetime(all_df["week_start"], errors="coerce").dt.date
+        all_df["date"] = pd.to_datetime(all_df["date"], errors="coerce").dt.date
 
-    # Liste over deltagere (fra både data og settings)
-    users_in_data = set(all_df["username"].dropna().str.strip()) if not all_df.empty else set()
-    users_in_settings = set(settings_df["username"].dropna().str.strip()) if not settings_df.empty else set()
+    if not settings_df.empty:
+        settings_df["weekly_goal"] = pd.to_numeric(settings_df["weekly_goal"], errors="coerce")\
+                                        .fillna(DEFAULT_WEEKLY_GOAL).astype(int)
+
+    # Deltagere: union af dem der har data + dem der findes i settings (ingen case-ændringer)
+    users_in_data = set(all_df["username"].dropna().astype(str)) if not all_df.empty else set()
+    users_in_settings = set(settings_df["username"].dropna().astype(str)) if not settings_df.empty else set()
     participants = sorted(users_in_data.union(users_in_settings))
 
-    # --- Beregn "denne uge" leaderboard ---
+    # --- Denne uge (date vs date!) ---
     today = dt.date.today()
-    this_week_start_date = monday_of_week(today)
-    this_week_start_str = this_week_start_date.isoformat()
+    this_week_start = monday_of_week(today)  # date-objekt
 
     if not all_df.empty:
-        week_df = all_df[all_df["week_start"] == this_week_start_str]
-        week_totals = week_df.groupby("username", as_index=False)["pullups"].sum().rename(columns={"pullups":"week_total"})
+        week_df = all_df[all_df["week_start"] == this_week_start]
+        week_totals = (week_df.groupby("username", as_index=False)["pullups"]
+                               .sum().rename(columns={"pullups":"week_total"}))
     else:
         week_totals = pd.DataFrame(columns=["username","week_total"])
 
-    # mål pr. bruger (default hvis mangler)
-    goals = settings_df[["username","weekly_goal"]].copy() if not settings_df.empty else pd.DataFrame(columns=["username","weekly_goal"])
-    goals["weekly_goal"] = pd.to_numeric(goals["weekly_goal"], errors="coerce").fillna(DEFAULT_WEEKLY_GOAL).astype(int)
+    # Mål pr. bruger
+    goals = settings_df[["username","weekly_goal"]].copy() if not settings_df.empty \
+            else pd.DataFrame(columns=["username","weekly_goal"])
 
-    # fuld deltager-liste med 0 totals
+    # Fuldt leaderboard (alle deltagere, 0 hvis ingen logs)
     base = pd.DataFrame({"username": participants})
-    leaderboard = base.merge(week_totals, how="left", on="username").merge(goals, how="left", on="username")
+    leaderboard = base.merge(week_totals, how="left", on="username")\
+                      .merge(goals, how="left", on="username")
     leaderboard["week_total"] = leaderboard["week_total"].fillna(0).astype(int)
     leaderboard["weekly_goal"] = leaderboard["weekly_goal"].fillna(DEFAULT_WEEKLY_GOAL).astype(int)
-    leaderboard["pct"] = (leaderboard["week_total"] / leaderboard["weekly_goal"]).fillna(0.0)
-    leaderboard["status"] = leaderboard["pct"].ge(1.0).map({True:"✅ Opnået", False:"⏳ Ikke endnu"})
+    leaderboard["pct"] = (leaderboard["week_total"] / leaderboard["weekly_goal"]).replace([pd.NA, float("inf")], 0).fillna(0.0)
+    leaderboard["Status"] = leaderboard["pct"].ge(1.0).map({True:"✅ Opnået", False:"⏳ Ikke endnu"})
     leaderboard = leaderboard.sort_values(["pct","week_total"], ascending=[False, False]).reset_index(drop=True)
 
     # --- Community hero ---
     community_week_total = int(leaderboard["week_total"].sum())
-    community_week_goal   = int(leaderboard["weekly_goal"].sum())
-    community_pct         = 0 if community_week_goal == 0 else community_week_total / community_week_goal
-    # all-time community
-    community_all_time = int(all_df["pullups"].sum()) if not all_df.empty else 0
+    community_week_goal  = int(leaderboard["weekly_goal"].sum())
+    community_pct        = 0 if community_week_goal == 0 else community_week_total / community_week_goal
 
     st.markdown(f"""
     <div class="hero-card" style="margin-top:8px;">
@@ -491,7 +532,6 @@ with tab2:
       </div>
     </div>
     """, unsafe_allow_html=True)
-
     st.progress(min(community_pct, 1.0))
 
     # --- Ugentligt leaderboard (denne uge) ---
@@ -502,7 +542,6 @@ with tab2:
             "week_total":"Ugens total",
             "weekly_goal":"Mål",
             "pct":"Fremdrift",
-            "status":"Status",
         })[["Bruger","Ugens total","Mål","Fremdrift","Status"]],
         use_container_width=True,
         hide_index=True,
@@ -519,14 +558,11 @@ with tab2:
     # --- All-time leaderboard ---
     st.subheader("All-time leaderboard")
     if not all_df.empty:
-        alltime = all_df.groupby("username", as_index=False)["pullups"].sum().rename(columns={"pullups":"Total"})
-        # gennemsnit/uge (valgfrit): kræver antallet af forskellige uger per bruger
-        weeks_per_user = (
-            all_df.assign(week_start=pd.to_datetime(all_df["week_start"], errors="coerce").dt.date)
-                 .dropna(subset=["week_start"])
-                 .groupby("username")["week_start"].nunique()
-                 .reset_index().rename(columns={"week_start":"Uger"})
-        )
+        alltime = (all_df.groupby("username", as_index=False)["pullups"]
+                          .sum().rename(columns={"pullups":"Total"}))
+        weeks_per_user = (all_df.dropna(subset=["week_start"])
+                               .groupby("username")["week_start"].nunique()
+                               .reset_index().rename(columns={"week_start":"Uger"}))
         alltime = alltime.merge(weeks_per_user, how="left", on="username")
         alltime["Uger"] = alltime["Uger"].fillna(0).astype(int)
         alltime["Snit/uge"] = alltime.apply(lambda r: int(r["Total"]/r["Uger"]) if r["Uger"] > 0 else 0, axis=1)
