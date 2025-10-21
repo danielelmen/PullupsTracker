@@ -347,7 +347,7 @@ else:
 
     # Tilføj mål, status og progress for hver uge
     weekly["goal"] = int(current_goal)
-    weekly["status"] = weekly["pullups"].ge(weekly["goal"]).map({True: "✅ Opnået", False: "⏳ Ikke endnu"})
+    weekly["status"] = weekly["pullups"].ge(weekly["goal"]).map({True: "✅ Opnået", False: "⏳ Ikke i mål"})
     weekly["progress"] = (weekly["pullups"] / weekly["goal"]).clip(upper=1.0)
 
     # Pæne labels/kolonner
@@ -361,7 +361,7 @@ else:
     view = weekly[["uge", "uge_start", "pullups", "goal", "status"]].rename(
         columns={
             "uge": "Uge",
-            "uge_start": "Uge start (mandag)",
+            "uge_start": "Uge start",
             "pullups": "Total",
             "goal": "Mål",
             "status": "Status",
