@@ -33,6 +33,8 @@ def authenticate():
 
 authenticate()
 
+user = st.session_state["username"]
+st.write(f"Du er logget ind som: {user}")
 
 ################ Google sheets test
 
@@ -66,7 +68,7 @@ st.dataframe(df if not df.empty else pd.DataFrame(columns=["username","date","pu
 # Quick write test
 with st.form("write_test"):
     st.write("Append a test row:")
-    username = st.text_input("username", value=["username"])
+    username = st.text_input("username", value={user})
     qty = st.number_input("pullups", min_value=1, value=10)
     submitted = st.form_submit_button("Append")
     if submitted:
