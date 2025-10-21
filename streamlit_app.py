@@ -29,6 +29,52 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# -------- Community helpers --------
+from typing import List
+
+@st.cache_data(ttl=60)
+def list_user_tabs() -> List[str]:
+    """Returnér alle data-faner (ekskl. _settings og skjulte)."""
+    _, sh = get_client_and_sheet()
+    titles = [ws.title for ws in sh.worksheets()]
+    return [t for t in titles if t != SETTINGS_SHEET and not t.startswith("_")]
+
+@st.cache_data(ttl=15)
+def read_all_users_df(tab_names: List[str]) -> pd.DataFrame:
+    """Læs alle brugeres data og returnér ét samlet DF med samme kolonner som DATA_HEADERS."""
+    if not tab_names:
+        return pd.DataFrame(columns=DATA_HEADERS)
+    frames = []
+    _, sh = get_client_and_sheet()
+    for name in tab_names:
+        try:
+            ws = sh.worksheet(name)
+            values = ws.get("A1:E10000")
+            if not values:
+                continue
+            headers = values[0]
+            rows = values[1:]
+            rows = [r + [""]*(len(headers)-len(r)) for r in rows]
+            rows = [r[:len(headers)] for r in rows]
+            df_i = pd.DataFrame(rows, columns=headers)
+            if not df_i.empty:
+                df_i["pullups"] = pd.to_numeric(df_i["pullups"], errors="coerce").fillna(0).astype(int)
+            frames.append(df_i)
+        except Exception:
+            # Ignorér faner der ikke kan læses
+            continue
+    if not frames:
+        return pd.DataFrame(columns=DATA_HEADERS)
+    df = pd.concat(frames, ignore_index=True)
+    # sikkerhed: udfyld manglende kolonner
+    for c in DATA_HEADERS:
+        if c not in df.columns:
+            df[c] = "" if c != "pullups" else 0
+    return df[DATA_HEADERS]
+
+def compute_week_label(d: dt.date) -> str:
+    iso = d.isocalendar()
+    return f"{iso.year}-W{iso.week:02d}"
 
 ################ Konfiguration ####################
 SHEET_TITLE = "PullupsSheet"  # skal matche din Google Sheet titel
@@ -213,164 +259,169 @@ if not goal_found:
 tab_name = user_tab(user)
 st.title(f"🏋️ Din uge, {user}")
 
-ws = ensure_user_ws(tab_name)
-df = read_user_df(tab_name)
+tab1, tab2 = st.tabs(["Min uge", "Community"])
+with tab1:
+    ws = ensure_user_ws(tab_name)
+    df = read_user_df(tab_name)
 
-# --- All time & startdato (beregning) ---
-all_time_total = int(df["pullups"].sum()) if not df.empty else 0
-first_date = None
-if not df.empty and "date" in df.columns:
-    try:
-        first_date = pd.to_datetime(df["date"]).min().date()
-    except Exception:
-        first_date = None
+    # --- All time & startdato (beregning) ---
+    all_time_total = int(df["pullups"].sum()) if not df.empty else 0
+    first_date = None
+    if not df.empty and "date" in df.columns:
+        try:
+            first_date = pd.to_datetime(df["date"]).min().date()
+        except Exception:
+            first_date = None
 
-# --- HERO: All time i toppen ---
-st.markdown(f"""
-<div class="hero-card">
-  <div class="hero-left">
-    <div class="hero-label">All time</div>
-    <div class="hero-number">{format_int(all_time_total)}</div>
-    {f'<div class="hero-sub">siden {first_date.isoformat()}</div>' if first_date else ''}
-  </div>
-  <div class="hero-right">
-    <div>Ugemål</div>
-    <div class="chip">{format_int(int(current_goal))}</div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-
-# Quick log (kun for dig selv)
-with st.form("log_pullups"):
-    qty = st.number_input("Tilføj pullups", min_value=1, step=5)
-    add = st.form_submit_button("Tilføj")
-    if add:
-        today = dt.date.today()
-        row = [
-            user,
-            today.isoformat(),
-            int(qty),
-            monday_of_week(today).isoformat(),
-            today.isocalendar().week,
-        ]
-        ensure_headers(ws, DATA_HEADERS)
-        ws.append_row(row)
-        st.success(f"Tilføjede {qty} for {user}")
-        st.cache_data.clear()
-        st.rerun()
-
-# Stats for i dag og denne uge
-today = dt.date.today()
-this_week_start = monday_of_week(today).isoformat()
-
-my_week = pd.DataFrame(columns=df.columns if not df.empty else DATA_HEADERS)
-my_day_total = 0
-my_week_total = 0
-
-if not df.empty:
-    my_week = df[df["week_start"] == this_week_start]
-    my_day_total = int(my_week[my_week["date"] == today.isoformat()]["pullups"].sum())
-    my_week_total = int(my_week["pullups"].sum())
-
-goal = max(int(current_goal), 1)
-remaining = max(goal - my_week_total, 0)
-days_left = max(1, 7 - today.weekday())  # inkl. i dag
-avg_needed = (remaining + days_left - 1) // days_left  # ceil
-
-# 4 metrics (uden All time)
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("I dag", my_day_total)
-col2.metric("Denne uge", my_week_total)
-col3.metric(f"Til {goal}", remaining)
-col4.metric("Behov / dag", avg_needed)
+    # --- HERO: All time i toppen ---
+    st.markdown(f"""
+    <div class="hero-card">
+    <div class="hero-left">
+        <div class="hero-label">All time</div>
+        <div class="hero-number">{format_int(all_time_total)}</div>
+        {f'<div class="hero-sub">siden {first_date.isoformat()}</div>' if first_date else ''}
+    </div>
+    <div class="hero-right">
+        <div>Ugemål</div>
+        <div class="chip">{format_int(int(current_goal))}</div>
+    </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 
-st.subheader("Dine loggede pullups (denne uge)")
-st.dataframe(
-    my_week[["date","pullups"]].sort_values("date", ascending=False).reset_index(drop=True)
-    if not my_week.empty else pd.DataFrame(columns=["date","pullups"]),
-    use_container_width=True
-)
-
-# --- Slet seneste log ---
-if st.button("🗑️ Fortryd seneste log"):
-    all_values = ws.get_all_values()
-    if len(all_values) <= 1:
-        st.info("Ingen rækker at slette endnu.")
-    else:
-        last_row_index = len(all_values)  # 1-baseret i Sheets
-        last_row = all_values[-1]
-        if last_row[0].lower() == user.lower():
-            ws.delete_rows(last_row_index)
-            st.success(f"Slettede seneste log ({last_row[1]} – {last_row[2]} reps)")
+    # Quick log (kun for dig selv)
+    with st.form("log_pullups"):
+        qty = st.number_input("Tilføj pullups", min_value=1, step=5)
+        add = st.form_submit_button("Tilføj")
+        if add:
+            today = dt.date.today()
+            row = [
+                user,
+                today.isoformat(),
+                int(qty),
+                monday_of_week(today).isoformat(),
+                today.isocalendar().week,
+            ]
+            ensure_headers(ws, DATA_HEADERS)
+            ws.append_row(row)
+            st.success(f"Tilføjede {qty} for {user}")
             st.cache_data.clear()
             st.rerun()
-        else:
-            st.warning("Den seneste række ser ikke ud til at være din.")
 
-# --- Ugentlige totaler (all time) ---
-st.subheader("Ugentlige totaler (all time)")
-if df.empty:
-    st.info("Ingen data endnu.")
-else:
-    # Sikr datatyper
-    tmp = df.copy()
-    tmp["pullups"] = pd.to_numeric(tmp["pullups"], errors="coerce").fillna(0).astype(int)
-    # Brug eksisterende week_start (allerede mandag) og beregn iso-år/uge for tydelig label
-    tmp["week_start"] = pd.to_datetime(tmp["week_start"], errors="coerce").dt.date
-    # Fald tilbage hvis week_start mangler/er tom: rekalkulér fra date
-    mask_missing_ws = tmp["week_start"].isna()
-    if mask_missing_ws.any():
-        tmp_date = pd.to_datetime(tmp.loc[mask_missing_ws, "date"], errors="coerce").dt.date
-        tmp.loc[mask_missing_ws, "week_start"] = tmp_date.map(lambda d: monday_of_week(d) if pd.notna(d) else pd.NaT)
+    # Stats for i dag og denne uge
+    today = dt.date.today()
+    this_week_start = monday_of_week(today).isoformat()
 
-    # iso label (år-uge)
-    try:
-        ws_dt = pd.to_datetime(tmp["week_start"])
-        iso_year = ws_dt.dt.isocalendar().year.astype(int)
-        iso_week = ws_dt.dt.isocalendar().week.astype(int)
-    except Exception:
-        # fallback hvis parsning fejler
-        iso_year = pd.Series([None]*len(tmp))
-        iso_week = pd.Series([None]*len(tmp))
+    my_week = pd.DataFrame(columns=df.columns if not df.empty else DATA_HEADERS)
+    my_day_total = 0
+    my_week_total = 0
 
-    tmp["iso_year"] = iso_year
-    tmp["iso_week"] = iso_week
+    if not df.empty:
+        my_week = df[df["week_start"] == this_week_start]
+        my_day_total = int(my_week[my_week["date"] == today.isoformat()]["pullups"].sum())
+        my_week_total = int(my_week["pullups"].sum())
 
-    weekly = (
-        tmp.groupby(["iso_year", "iso_week", "week_start"], dropna=False)["pullups"]
-        .sum()
-        .reset_index()
-        .sort_values(["week_start"], ascending=False)
-    )
+    goal = max(int(current_goal), 1)
+    remaining = max(goal - my_week_total, 0)
+    days_left = max(1, 7 - today.weekday())  # inkl. i dag
+    avg_needed = (remaining + days_left - 1) // days_left  # ceil
 
-    # Tilføj mål, status og progress for hver uge
-    weekly["goal"] = int(current_goal)
-    weekly["status"] = weekly["pullups"].ge(weekly["goal"]).map({True: "✅ Opnået", False: "⏳ Ikke i mål"})
-    weekly["progress"] = (weekly["pullups"] / weekly["goal"]).clip(upper=1.0)
+    # 4 metrics (uden All time)
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("I dag", my_day_total)
+    col2.metric("Denne uge", my_week_total)
+    col3.metric(f"Til {goal}", remaining)
+    col4.metric("Behov / dag", avg_needed)
 
-    # Pæne labels/kolonner
-    weekly["uge"] = weekly.apply(
-        lambda r: f"{int(r['iso_year'])}-W{int(r['iso_week']):02d}" if pd.notna(r["iso_year"]) and pd.notna(r["iso_week"]) else "",
-        axis=1
-    )
-    weekly["uge_start"] = weekly["week_start"].astype(str)
 
-    # Vælg og omdøb kolonner til visning
-    view = weekly[["uge", "uge_start", "pullups", "goal", "status"]].rename(
-        columns={
-            "uge": "Uge",
-            "uge_start": "Uge start",
-            "pullups": "Total",
-            "goal": "Mål",
-            "status": "Status",
-        }
-    )
-
-    # Streamlit-tabel
+    st.subheader("Dine loggede pullups (denne uge)")
     st.dataframe(
-        view,
-        use_container_width=True,
-        hide_index=True,
+        my_week[["date","pullups"]].sort_values("date", ascending=False).reset_index(drop=True)
+        if not my_week.empty else pd.DataFrame(columns=["date","pullups"]),
+        use_container_width=True
     )
+
+    # --- Slet seneste log ---
+    if st.button("🗑️ Fortryd seneste log"):
+        all_values = ws.get_all_values()
+        if len(all_values) <= 1:
+            st.info("Ingen rækker at slette endnu.")
+        else:
+            last_row_index = len(all_values)  # 1-baseret i Sheets
+            last_row = all_values[-1]
+            if last_row[0].lower() == user.lower():
+                ws.delete_rows(last_row_index)
+                st.success(f"Slettede seneste log ({last_row[1]} – {last_row[2]} reps)")
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.warning("Den seneste række ser ikke ud til at være din.")
+
+    # --- Ugentlige totaler (all time) ---
+    st.subheader("Ugentlige totaler (all time)")
+    if df.empty:
+        st.info("Ingen data endnu.")
+    else:
+        # Sikr datatyper
+        tmp = df.copy()
+        tmp["pullups"] = pd.to_numeric(tmp["pullups"], errors="coerce").fillna(0).astype(int)
+        # Brug eksisterende week_start (allerede mandag) og beregn iso-år/uge for tydelig label
+        tmp["week_start"] = pd.to_datetime(tmp["week_start"], errors="coerce").dt.date
+        # Fald tilbage hvis week_start mangler/er tom: rekalkulér fra date
+        mask_missing_ws = tmp["week_start"].isna()
+        if mask_missing_ws.any():
+            tmp_date = pd.to_datetime(tmp.loc[mask_missing_ws, "date"], errors="coerce").dt.date
+            tmp.loc[mask_missing_ws, "week_start"] = tmp_date.map(lambda d: monday_of_week(d) if pd.notna(d) else pd.NaT)
+
+        # iso label (år-uge)
+        try:
+            ws_dt = pd.to_datetime(tmp["week_start"])
+            iso_year = ws_dt.dt.isocalendar().year.astype(int)
+            iso_week = ws_dt.dt.isocalendar().week.astype(int)
+        except Exception:
+            # fallback hvis parsning fejler
+            iso_year = pd.Series([None]*len(tmp))
+            iso_week = pd.Series([None]*len(tmp))
+
+        tmp["iso_year"] = iso_year
+        tmp["iso_week"] = iso_week
+
+        weekly = (
+            tmp.groupby(["iso_year", "iso_week", "week_start"], dropna=False)["pullups"]
+            .sum()
+            .reset_index()
+            .sort_values(["week_start"], ascending=False)
+        )
+
+        # Tilføj mål, status og progress for hver uge
+        weekly["goal"] = int(current_goal)
+        weekly["status"] = weekly["pullups"].ge(weekly["goal"]).map({True: "✅ Opnået", False: "⏳ Ikke i mål"})
+        weekly["progress"] = (weekly["pullups"] / weekly["goal"]).clip(upper=1.0)
+
+        # Pæne labels/kolonner
+        weekly["uge"] = weekly.apply(
+            lambda r: f"{int(r['iso_year'])}-W{int(r['iso_week']):02d}" if pd.notna(r["iso_year"]) and pd.notna(r["iso_week"]) else "",
+            axis=1
+        )
+        weekly["uge_start"] = weekly["week_start"].astype(str)
+
+        # Vælg og omdøb kolonner til visning
+        view = weekly[["uge", "uge_start", "pullups", "goal", "status"]].rename(
+            columns={
+                "uge": "Uge",
+                "uge_start": "Uge start",
+                "pullups": "Total",
+                "goal": "Mål",
+                "status": "Status",
+            }
+        )
+
+        # Streamlit-tabel
+        st.dataframe(
+            view,
+            use_container_width=True,
+            hide_index=True,
+        )
+# ------------- FANEN: Community -------------
+with tab2:
+    st.header("🌍 Community")
