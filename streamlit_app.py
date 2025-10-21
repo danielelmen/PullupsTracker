@@ -536,13 +536,19 @@ with tab2:
 
     # --- Ugentligt leaderboard (denne uge) ---
     st.subheader("Ugentligt leaderboard")
+
+    # lav en 0–100 kolonne til visning
+    view = leaderboard.copy()
+    view["FremdriftPct"] = (view["pct"] * 100).clip(lower=0, upper=100)
+
     st.data_editor(
-        leaderboard.rename(columns={
-            "username":"Bruger",
-            "week_total":"Ugens total",
-            "weekly_goal":"Mål",
-            "pct":"Fremdrift",
-        })[["Bruger","Ugens total","Mål","Fremdrift","Status"]],
+        view.rename(columns={
+            "username": "Bruger",
+            "week_total": "Ugens total",
+            "weekly_goal": "Mål",
+            "FremdriftPct": "Fremdrift",
+            "Status": "Status",
+        })[["Bruger", "Ugens total", "Mål", "Fremdrift", "Status"]],
         use_container_width=True,
         hide_index=True,
         disabled=True,
@@ -550,10 +556,15 @@ with tab2:
             "Ugens total": st.column_config.NumberColumn("Ugens total", format="%d"),
             "Mål": st.column_config.NumberColumn("Mål", format="%d"),
             "Fremdrift": st.column_config.ProgressColumn(
-                "Fremdrift", help="Andel af ugemål", format="%.0f%%", min_value=0, max_value=1
+                "Fremdrift",
+                help="Andel af ugemål",
+                format="%.0f%%",   # nu passer det, fordi værdien er 0–100
+                min_value=0,
+                max_value=100,
             ),
         }
     )
+
 
     # --- All-time leaderboard ---
     st.subheader("All-time leaderboard")
