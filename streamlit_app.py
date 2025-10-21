@@ -484,6 +484,11 @@ with tab2:
         settings_df["weekly_goal"] = pd.to_numeric(settings_df["weekly_goal"], errors="coerce")\
                                         .fillna(DEFAULT_WEEKLY_GOAL).astype(int)
 
+    # Deltagere: union af dem der har data + dem der findes i settings (ingen case-ændringer)
+    users_in_data = set(all_df["username"].dropna().astype(str)) if not all_df.empty else set()
+    users_in_settings = set(settings_df["username"].dropna().astype(str)) if not settings_df.empty else set()
+    participants = sorted(users_in_data.union(users_in_settings))
+
     # --- Community all-time (øverst) ---
     community_all_time = int(all_df["pullups"].sum()) if not all_df.empty else 0
     avg_per_user = int(round(community_all_time / max(1, len(participants))))  # valgfrit: snit pr. person
@@ -501,11 +506,6 @@ with tab2:
     </div>
     </div>
     """, unsafe_allow_html=True)
-
-    # Deltagere: union af dem der har data + dem der findes i settings (ingen case-ændringer)
-    users_in_data = set(all_df["username"].dropna().astype(str)) if not all_df.empty else set()
-    users_in_settings = set(settings_df["username"].dropna().astype(str)) if not settings_df.empty else set()
-    participants = sorted(users_in_data.union(users_in_settings))
 
     # --- Denne uge (date vs date!) ---
     today = dt.date.today()
