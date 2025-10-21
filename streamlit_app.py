@@ -191,6 +191,9 @@ st.title(f"🏋️ Din uge, {user}")
 ws = ensure_user_ws(tab_name)
 df = read_user_df(tab_name)
 
+# All-time total for brugeren
+all_time_total = int(df["pullups"].sum()) if not df.empty else 0
+
 # Quick log (kun for dig selv)
 with st.form("log_pullups"):
     qty = st.number_input("Tilføj pullups", min_value=1, step=5)
@@ -228,11 +231,13 @@ remaining = max(goal - my_week_total, 0)
 days_left = max(1, 7 - today.weekday())  # inkl. i dag
 avg_needed = (remaining + days_left - 1) // days_left  # ceil
 
-col1, col2, col3, col4 = st.columns(4)
+# 5 metrics inkl. all-time
+col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("I dag", my_day_total)
 col2.metric("Denne uge", my_week_total)
 col3.metric(f"Til {goal}", remaining)
 col4.metric("Behov / dag", avg_needed)
+col5.metric("All time", all_time_total)
 st.progress(min(my_week_total / goal, 1.0))
 
 st.subheader("Dine loggede pullups (denne uge)")
