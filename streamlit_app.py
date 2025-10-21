@@ -118,25 +118,6 @@ with st.form("log_pullups"):
         st.cache_data.clear()  # opdatér visning
         st.rerun()
 
-# --- Slet seneste log ---
-st.subheader("🗑️ Slet seneste log")
-
-if st.button("Fortryd seneste"):
-    all_values = ws.get_all_values()
-    if len(all_values) <= 1:
-        st.info("Ingen rækker at slette endnu.")
-    else:
-        last_row_index = len(all_values)  # 1-baseret i Sheets
-        last_row = all_values[-1]
-
-        # Ekstra sikkerhed: tjek at rækken hører til brugeren
-        if last_row[0].lower() == user.lower():
-            ws.delete_rows(last_row_index)
-            st.success(f"Slettede seneste log ({last_row[1]} – {last_row[2]} reps)")
-            st.cache_data.clear()
-            st.rerun()
-        else:
-            st.warning("Den seneste række ser ikke ud til at være din.")
 
 # Stats for i dag og denne uge
 today = dt.date.today()
@@ -168,3 +149,22 @@ st.dataframe(
     if not my_week.empty else pd.DataFrame(columns=["date","pullups"]),
     use_container_width=True
 )
+
+# --- Slet seneste log ---
+
+if st.button("🗑️ Fortryd seneste log"):
+    all_values = ws.get_all_values()
+    if len(all_values) <= 1:
+        st.info("Ingen rækker at slette endnu.")
+    else:
+        last_row_index = len(all_values)  # 1-baseret i Sheets
+        last_row = all_values[-1]
+
+        # Ekstra sikkerhed: tjek at rækken hører til brugeren
+        if last_row[0].lower() == user.lower():
+            ws.delete_rows(last_row_index)
+            st.success(f"Slettede seneste log ({last_row[1]} – {last_row[2]} reps)")
+            st.cache_data.clear()
+            st.rerun()
+        else:
+            st.warning("Den seneste række ser ikke ud til at være din.")
