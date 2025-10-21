@@ -286,17 +286,6 @@ col3.metric(f"Til {goal}", remaining)
 col4.metric("Behov / dag", avg_needed)
 
 
-# --- Vis startdato for challenge ---
-first_date = None
-if not df.empty and "date" in df.columns:
-    try:
-        first_date = pd.to_datetime(df["date"]).min().date()
-    except Exception:
-        first_date = None
-
-if first_date:
-    st.caption(f"Pullup challenge startet **{first_date.isoformat()}**")
-
 st.subheader("Dine loggede pullups (denne uge)")
 st.dataframe(
     my_week[["date","pullups"]].sort_values("date", ascending=False).reset_index(drop=True)
