@@ -4,6 +4,30 @@ import pandas as pd
 from google.oauth2.service_account import Credentials
 import datetime as dt
 
+################ Login ####################
+
+def require_login():
+    if "user" in st.session_state and st.session_state["user"]:
+        return st.session_state["user"]
+
+    st.header("🔐 Login")
+    with st.form("login"):
+        u = st.text_input("Brugernavn").strip().lower()
+        p = st.text_input("Kodeord", type="password")
+        ok = st.form_submit_button("Log ind")
+    if ok:
+        users = st.secrets.get("auth", {}).get("users", {})
+        if u in users and p == users[u]:
+            st.session_state["user"] = u
+            st.success(f"Velkommen, {u}!")
+            st.rerun()
+        else:
+            st.error("Forkert brugernavn eller kodeord.")
+    st.stop()  # Stop resten af appen indtil login er godkendt
+
+
+################ Google sheets test
+
 SHEET_TITLE = "PullupsSheet"   # your Google Sheet name
 TAB_NAME    = "overview"            # the tab name
 
