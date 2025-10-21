@@ -8,13 +8,13 @@ import re
 ################ Konfiguration ####################
 SHEET_TITLE = "PullupsSheet"  # skal matche din Google Sheet titel
 DATA_HEADERS = ["username","date","pullups","week_start","week_number"]
+
+# Nyt _settings layout uden "locked"
 SETTINGS_SHEET = "_settings"
-SETTINGS_HEADERS = ["username","weekly_goal","locked","updated_at"]
+SETTINGS_HEADERS = ["username","weekly_goal","updated_at"]
 
 DEFAULT_WEEKLY_GOAL = 500
-ALLOW_USER_CHANGE = True  # flip til False hvis målet kun må sættes første gang
-
-GOAL_MIN, GOAL_MAX = 50, 10000  # simpel sanity range
+GOAL_MIN, GOAL_MAX = 50, 10000  # enkel sanity range
 
 ################ Login ####################
 users = st.secrets.get("users", {})
@@ -81,14 +81,20 @@ def ensure_headers(ws, expected_headers):
         ws.update("A1", [expected_headers])
 
 def ensure_settings_ws():
-    """Opret/_åbn settings-worksheet med faste kolonner."""
+    """Opret/_åbn settings-worksheet uden 'locked'. Har migrations-tålmodighed."""
     _, sh = get_client_and_sheet()
     try:
         ws = sh.worksheet(SETTINGS_SHEET)
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title=SETTINGS_SHEET, rows=100, cols=10)
         ws.update("A1", [SETTINGS_HEADERS])
-    ensure_headers(ws, SETTINGS_HEADERS)
+        return ws
+
+    # Hvis arket findes men mangler de rigtige headers, opdatér dem
+    headers = ws.row_values(1)
+    if headers != SETTINGS_HEADERS:
+        # Accepter gamle varianter med 'locked' og omskriv til nye headers i minnet
+        ws.update("A1", [SETTINGS_HEADERS])
     return ws
 
 @st.cache_data(ttl=15)
@@ -110,71 +116,71 @@ def read_user_df(tab_name: str) -> pd.DataFrame:
 @st.cache_data(ttl=60)
 def read_settings_df() -> pd.DataFrame:
     ws = ensure_settings_ws()
-    values = ws.get("A1:D10000")
+    values = ws.get("A1:C10000")  # nye 3 kolonner
     if not values:
         return pd.DataFrame(columns=SETTINGS_HEADERS)
+
     headers = values[0]
     rows = values[1:]
-    rows = [r + [""]*(len(headers)-len(r)) for r in rows]
-    rows = [r[:len(headers)] for r in rows]
-    df = pd.DataFrame(rows, columns=headers)
+    # Migration: hvis der ligger en ældre version med 4 kolonner (inkl. locked),
+    # så trim til de første 3 (username, weekly_goal, updated_at)
+    if len(headers) >= 3:
+        rows = [r + [""]*(len(headers)-len(r)) for r in rows]
+        # Map/trim til første 3 kolonner
+        rows = [r[:3] for r in rows]
+
+    df = pd.DataFrame(rows, columns=SETTINGS_HEADERS)
     if not df.empty:
         df["weekly_goal"] = pd.to_numeric(df["weekly_goal"], errors="coerce").fillna(DEFAULT_WEEKLY_GOAL).astype(int)
-        df["locked"] = df["locked"].astype(str).str.lower().isin(["true","1","yes"])
     return df
 
-def get_user_goal(username: str) -> tuple[int, bool]:
-    """Returnér (goal, locked). Hvis ikke sat, returnér default og False."""
+def get_user_goal(username: str) -> int:
     df = read_settings_df()
     rec = df[df["username"].str.lower() == username.lower()]
     if rec.empty:
-        return DEFAULT_WEEKLY_GOAL, False
-    row = rec.iloc[0]
-    return int(row["weekly_goal"]), bool(row["locked"])
+        return DEFAULT_WEEKLY_GOAL
+    return int(rec.iloc[0]["weekly_goal"])
 
-def set_user_goal(username: str, goal: int, lock: bool = False):
-    """Skriv/overskriv målet i settings-worksheet."""
+def set_user_goal(username: str, goal: int):
+    """Skriv/overskriv målet i _settings (altid frit ændreligt)."""
     _, sh = get_client_and_sheet()
     ws = ensure_settings_ws()
     data = ws.get_all_values()
     headers = data[0] if data else SETTINGS_HEADERS
+
     # find eksisterende række
     idx = None
     for i, r in enumerate(data[1:], start=2):  # 1-baseret, spring headers over
         if len(r) > 0 and r[0].strip().lower() == username.strip().lower():
             idx = i
             break
+
     now_iso = dt.datetime.now().isoformat(timespec="seconds")
-    row = [username, str(int(goal)), "TRUE" if lock else "FALSE", now_iso]
+    row = [username, str(int(goal)), now_iso]
+
     if idx is None:
         ws.append_row(row)
     else:
-        ws.update(f"A{idx}:D{idx}", [row])
+        ws.update(f"A{idx}:C{idx}", [row])
+
     st.cache_data.clear()  # ryd læse-caches
 
 ################ UI: Målvalg ####################
-# Hent brugerens mål (eller default hvis ikke sat)
-current_goal, is_locked = get_user_goal(user)
+current_goal = get_user_goal(user)
 
 with st.sidebar:
     st.markdown("### ⚙️ Indstillinger")
-    st.write(f"Aktuel uge-mål: **{current_goal}**")
-    if not is_locked and ALLOW_USER_CHANGE:
-        with st.expander("Rediger ugemål"):
-            new_goal = st.number_input("Ugentligt mål (reps)", min_value=GOAL_MIN, max_value=GOAL_MAX,
-                                       value=int(current_goal), step=10)
-            lock_after = st.checkbox("Lås mål (kan ikke ændres senere)", value=False,
-                                     help="Sæt hak hvis målet kun må ændres denne ene gang.")
-            if st.button("Gem mål"):
-                set_user_goal(user, int(new_goal), lock_after)
-                st.success(f"Ugemål gemt ({int(new_goal)}).")
-                st.rerun()
-    elif is_locked:
-        st.info("Dit mål er låst. Kontakt admin for at ændre det.")
+    st.write(f"Aktuelt ugemål: **{current_goal}**")
+    with st.expander("Rediger ugemål", expanded=False):
+        new_goal = st.number_input("Ugentligt mål (reps)", min_value=GOAL_MIN, max_value=GOAL_MAX,
+                                   value=int(current_goal), step=10)
+        if st.button("Gem mål"):
+            set_user_goal(user, int(new_goal))
+            st.success(f"Ugemål gemt ({int(new_goal)}).")
+            st.rerun()
 
-# Første-gangs opsætning (hvis bruger ikke har mål i settings)
+# Første-gangs hint
 if current_goal == DEFAULT_WEEKLY_GOAL:
-    # Vis en blid prompt første gang (kan skjules hvis du vil)
     st.info("Tip: Du kan vælge dit ugentlige mål i sidebaren under **Indstillinger**.")
 
 ################ Forside: data & logging ####################
@@ -219,8 +225,7 @@ if not df.empty:
 goal = max(int(current_goal), 1)
 remaining = max(goal - my_week_total, 0)
 days_left = max(1, 7 - today.weekday())  # inkl. i dag
-# ceil-division
-avg_needed = (remaining + days_left - 1) // days_left
+avg_needed = (remaining + days_left - 1) // days_left  # ceil
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("I dag", my_day_total)
