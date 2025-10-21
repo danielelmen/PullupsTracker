@@ -373,6 +373,11 @@ with tab1:
     col3.metric(f"Til {goal}", remaining)
     col4.metric("Behov / dag", avg_needed)
 
+    # Progress bar under metrics
+    progress = (my_week_total / goal) if goal > 0 else 0
+    progress = max(0.0, min(progress, 1.0))
+    st.progress(progress)
+
 
     st.subheader("Dine loggede pullups (denne uge)")
     st.dataframe(
