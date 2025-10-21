@@ -534,6 +534,26 @@ with tab2:
     """, unsafe_allow_html=True)
     st.progress(min(community_pct, 1.0))
 
+    # --- Community all-time (øverst) ---
+    community_all_time = int(all_df["pullups"].sum()) if not all_df.empty else 0
+    avg_per_user = int(round(community_all_time / max(1, len(participants))))  # valgfrit: snit pr. person
+
+    st.markdown(f"""
+    <div class="hero-card" style="margin-top:8px;">
+    <div class="hero-left">
+        <div class="hero-label">Community all time</div>
+        <div class="hero-number">{format_int(community_all_time)}</div>
+        <div class="hero-sub">samlet antal pullups</div>
+    </div>
+    <div class="hero-right">
+        <div>👥 Deltagere</div>
+        <div class="chip">{len(participants)}</div>
+    </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+
     # --- Ugentligt leaderboard (denne uge) ---
     st.subheader("🔥Ugentligt leaderboard🔥")
 
