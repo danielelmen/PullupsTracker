@@ -102,7 +102,7 @@ df = read_user_df(tab_name)     # cache læsning baseret på fanenavn (hashbar)
 
 # Quick log (kun for dig selv)
 with st.form("log_pullups"):
-    qty = st.number_input("Tilføj pullups", min_value=1, step=1)
+    qty = st.number_input("Tilføj pullups", min_value=1, step=5)
     add = st.form_submit_button("Tilføj")
     if add:
         today = dt.date.today()
