@@ -60,7 +60,17 @@ st.title("Pull-up Tracker!")
 ws = get_ws()
 
 # Read all
-records = ws.get_all_records()
+try:
+    records = ws.get_all_records()
+except gspread.exceptions.APIError as e:
+    st.error("Google Sheets API fejl")
+    st.exception(e)
+    try:
+        st.write("Response status:", getattr(e, "response", None).status_code)
+        st.write("Response text:", getattr(e, "response", None).text[:500])
+    except Exception:
+        pass
+    st.stop()
 df = pd.DataFrame(records)
 st.subheader("Current data")
 st.dataframe(df if not df.empty else pd.DataFrame(columns=["username","date","pullups","week_start","week_number"]), use_container_width=True)
