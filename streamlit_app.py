@@ -5,8 +5,18 @@ from google.oauth2.service_account import Credentials
 import datetime as dt
 import re
 
-################ Login ####################
+################ Konfiguration ####################
+SHEET_TITLE = "PullupsSheet"  # skal matche din Google Sheet titel
+DATA_HEADERS = ["username","date","pullups","week_start","week_number"]
+SETTINGS_SHEET = "_settings"
+SETTINGS_HEADERS = ["username","weekly_goal","locked","updated_at"]
 
+DEFAULT_WEEKLY_GOAL = 500
+ALLOW_USER_CHANGE = True  # flip til False hvis målet kun må sættes første gang
+
+GOAL_MIN, GOAL_MAX = 50, 10000  # simpel sanity range
+
+################ Login ####################
 users = st.secrets.get("users", {})
 
 def authenticate():
@@ -29,14 +39,9 @@ def authenticate():
         st.stop()
 
 authenticate()
-
 user = st.session_state["username"]
 
 ################ Google Sheets ####################
-
-SHEET_TITLE = "PullupsSheet"  # skal matche din Google Sheet titel
-HEADERS     = ["username","date","pullups","week_start","week_number"]
-
 def monday_of_week(d: dt.date) -> dt.date:
     return d - dt.timedelta(days=d.weekday())  # mandag=0
 
@@ -61,28 +66,38 @@ def get_client_and_sheet():
     return gc, sh
 
 def ensure_user_ws(tab_name: str):
-    """Åbn eller opret fanen (ingen cache her)."""
+    """Åbn eller opret data-fanen (ingen cache her)."""
     _, sh = get_client_and_sheet()
     try:
         ws = sh.worksheet(tab_name)
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title=tab_name, rows=1000, cols=10)
-        ws.update("A1", [HEADERS])  # skriv headers første gang
+        ws.update("A1", [DATA_HEADERS])  # skriv headers første gang
     return ws
 
-def ensure_headers(ws):
+def ensure_headers(ws, expected_headers):
     first_row = ws.row_values(1)
-    if not first_row or first_row != HEADERS:
-        ws.update("A1", [HEADERS])
+    if not first_row or first_row != expected_headers:
+        ws.update("A1", [expected_headers])
+
+def ensure_settings_ws():
+    """Opret/_åbn settings-worksheet med faste kolonner."""
+    _, sh = get_client_and_sheet()
+    try:
+        ws = sh.worksheet(SETTINGS_SHEET)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title=SETTINGS_SHEET, rows=100, cols=10)
+        ws.update("A1", [SETTINGS_HEADERS])
+    ensure_headers(ws, SETTINGS_HEADERS)
+    return ws
 
 @st.cache_data(ttl=15)
 def read_user_df(tab_name: str) -> pd.DataFrame:
-    """Cache på STRINGS, ikke worksheet-objekter."""
     _, sh = get_client_and_sheet()
-    ws = sh.worksheet(tab_name)  # åbnes inde i funktionen
-    values = ws.get("A1:E10000")  # eksplicit range > stabilt
+    ws = sh.worksheet(tab_name)
+    values = ws.get("A1:E10000")
     if not values:
-        return pd.DataFrame(columns=HEADERS)
+        return pd.DataFrame(columns=DATA_HEADERS)
     headers = values[0]
     rows = values[1:]
     rows = [r + [""]*(len(headers)-len(r)) for r in rows]
@@ -92,12 +107,82 @@ def read_user_df(tab_name: str) -> pd.DataFrame:
         df["pullups"] = pd.to_numeric(df["pullups"], errors="coerce").fillna(0).astype(int)
     return df
 
-# ---------- Forside: Kun egne data ----------
+@st.cache_data(ttl=60)
+def read_settings_df() -> pd.DataFrame:
+    ws = ensure_settings_ws()
+    values = ws.get("A1:D10000")
+    if not values:
+        return pd.DataFrame(columns=SETTINGS_HEADERS)
+    headers = values[0]
+    rows = values[1:]
+    rows = [r + [""]*(len(headers)-len(r)) for r in rows]
+    rows = [r[:len(headers)] for r in rows]
+    df = pd.DataFrame(rows, columns=headers)
+    if not df.empty:
+        df["weekly_goal"] = pd.to_numeric(df["weekly_goal"], errors="coerce").fillna(DEFAULT_WEEKLY_GOAL).astype(int)
+        df["locked"] = df["locked"].astype(str).str.lower().isin(["true","1","yes"])
+    return df
+
+def get_user_goal(username: str) -> tuple[int, bool]:
+    """Returnér (goal, locked). Hvis ikke sat, returnér default og False."""
+    df = read_settings_df()
+    rec = df[df["username"].str.lower() == username.lower()]
+    if rec.empty:
+        return DEFAULT_WEEKLY_GOAL, False
+    row = rec.iloc[0]
+    return int(row["weekly_goal"]), bool(row["locked"])
+
+def set_user_goal(username: str, goal: int, lock: bool = False):
+    """Skriv/overskriv målet i settings-worksheet."""
+    _, sh = get_client_and_sheet()
+    ws = ensure_settings_ws()
+    data = ws.get_all_values()
+    headers = data[0] if data else SETTINGS_HEADERS
+    # find eksisterende række
+    idx = None
+    for i, r in enumerate(data[1:], start=2):  # 1-baseret, spring headers over
+        if len(r) > 0 and r[0].strip().lower() == username.strip().lower():
+            idx = i
+            break
+    now_iso = dt.datetime.now().isoformat(timespec="seconds")
+    row = [username, str(int(goal)), "TRUE" if lock else "FALSE", now_iso]
+    if idx is None:
+        ws.append_row(row)
+    else:
+        ws.update(f"A{idx}:D{idx}", [row])
+    st.cache_data.clear()  # ryd læse-caches
+
+################ UI: Målvalg ####################
+# Hent brugerens mål (eller default hvis ikke sat)
+current_goal, is_locked = get_user_goal(user)
+
+with st.sidebar:
+    st.markdown("### ⚙️ Indstillinger")
+    st.write(f"Aktuel uge-mål: **{current_goal}**")
+    if not is_locked and ALLOW_USER_CHANGE:
+        with st.expander("Rediger ugemål"):
+            new_goal = st.number_input("Ugentligt mål (reps)", min_value=GOAL_MIN, max_value=GOAL_MAX,
+                                       value=int(current_goal), step=10)
+            lock_after = st.checkbox("Lås mål (kan ikke ændres senere)", value=False,
+                                     help="Sæt hak hvis målet kun må ændres denne ene gang.")
+            if st.button("Gem mål"):
+                set_user_goal(user, int(new_goal), lock_after)
+                st.success(f"Ugemål gemt ({int(new_goal)}).")
+                st.rerun()
+    elif is_locked:
+        st.info("Dit mål er låst. Kontakt admin for at ændre det.")
+
+# Første-gangs opsætning (hvis bruger ikke har mål i settings)
+if current_goal == DEFAULT_WEEKLY_GOAL:
+    # Vis en blid prompt første gang (kan skjules hvis du vil)
+    st.info("Tip: Du kan vælge dit ugentlige mål i sidebaren under **Indstillinger**.")
+
+################ Forside: data & logging ####################
 tab_name = user_tab(user)
 st.title(f"🏋️ Din uge, {user}")
 
-ws = ensure_user_ws(tab_name)   # lås til brugerens fane (opret hvis mangler)
-df = read_user_df(tab_name)     # cache læsning baseret på fanenavn (hashbar)
+ws = ensure_user_ws(tab_name)
+df = read_user_df(tab_name)
 
 # Quick log (kun for dig selv)
 with st.form("log_pullups"):
@@ -112,18 +197,17 @@ with st.form("log_pullups"):
             monday_of_week(today).isoformat(),
             today.isocalendar().week,
         ]
-        ensure_headers(ws)
+        ensure_headers(ws, DATA_HEADERS)
         ws.append_row(row)
         st.success(f"Tilføjede {qty} for {user}")
-        st.cache_data.clear()  # opdatér visning
+        st.cache_data.clear()
         st.rerun()
-
 
 # Stats for i dag og denne uge
 today = dt.date.today()
 this_week_start = monday_of_week(today).isoformat()
 
-my_week = pd.DataFrame(columns=df.columns if not df.empty else HEADERS)
+my_week = pd.DataFrame(columns=df.columns if not df.empty else DATA_HEADERS)
 my_day_total = 0
 my_week_total = 0
 
@@ -132,18 +216,20 @@ if not df.empty:
     my_day_total = int(my_week[my_week["date"] == today.isoformat()]["pullups"].sum())
     my_week_total = int(my_week["pullups"].sum())
 
-remaining = max(500 - my_week_total, 0)
+goal = max(int(current_goal), 1)
+remaining = max(goal - my_week_total, 0)
 days_left = max(1, 7 - today.weekday())  # inkl. i dag
-avg_needed = (remaining + days_left - 1) // days_left  # ceil
+# ceil-division
+avg_needed = (remaining + days_left - 1) // days_left
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("I dag", my_day_total)
 col2.metric("Denne uge", my_week_total)
-col3.metric("Til 500", remaining)
+col3.metric(f"Til {goal}", remaining)
 col4.metric("Behov / dag", avg_needed)
-st.progress(min(my_week_total/500, 1.0))
+st.progress(min(my_week_total / goal, 1.0))
 
-st.subheader("Dine loggede sæt (denne uge)")
+st.subheader("Dine loggede pullups (denne uge)")
 st.dataframe(
     my_week[["date","pullups"]].sort_values("date", ascending=False).reset_index(drop=True)
     if not my_week.empty else pd.DataFrame(columns=["date","pullups"]),
@@ -151,7 +237,6 @@ st.dataframe(
 )
 
 # --- Slet seneste log ---
-
 if st.button("🗑️ Fortryd seneste log"):
     all_values = ws.get_all_values()
     if len(all_values) <= 1:
@@ -159,8 +244,6 @@ if st.button("🗑️ Fortryd seneste log"):
     else:
         last_row_index = len(all_values)  # 1-baseret i Sheets
         last_row = all_values[-1]
-
-        # Ekstra sikkerhed: tjek at rækken hører til brugeren
         if last_row[0].lower() == user.lower():
             ws.delete_rows(last_row_index)
             st.success(f"Slettede seneste log ({last_row[1]} – {last_row[2]} reps)")
