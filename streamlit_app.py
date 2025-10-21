@@ -39,7 +39,7 @@ st.write(f"Du er logget ind som: {user}")
 ################ Google sheets test
 
 SHEET_TITLE = "PullupsSheet"   # your Google Sheet name
-TAB_NAME    = "overview"            # the tab name
+TAB_NAME    = "daniel"            # the tab name
 
 @st.cache_resource
 def get_ws():
