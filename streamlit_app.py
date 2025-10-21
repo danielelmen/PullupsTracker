@@ -5,6 +5,31 @@ from google.oauth2.service_account import Credentials
 import datetime as dt
 import re
 
+# --- UI helper & styles ---
+def format_int(n: int) -> str:
+    # DK-format med punktum som tusindtalsseparator
+    return f"{n:,}".replace(",", ".")
+
+st.markdown("""
+<style>
+.hero-card{
+  display:flex;justify-content:space-between;align-items:center;gap:16px;
+  padding:18px 22px;border-radius:16px;border:1px solid #e5e7eb;
+  background:linear-gradient(135deg,#0ea5e933,#22c55e33);
+}
+.hero-left .hero-label{font-size:14px;color:#374151}
+.hero-left .hero-number{font-size:42px;font-weight:800;line-height:1.1;margin-top:4px}
+.hero-left .hero-sub{font-size:12px;color:#6b7280;margin-top:2px}
+.hero-right{display:flex;gap:8px;align-items:center}
+.chip{padding:6px 10px;border-radius:999px;background:#111827;color:#fff;font-weight:600}
+@media (prefers-color-scheme: dark){
+  .hero-card{border-color:#374151;background:linear-gradient(135deg,#0ea5e91a,#22c55e1a)}
+  .hero-left .hero-label,.hero-left .hero-sub{color:#9ca3af}
+}
+</style>
+""", unsafe_allow_html=True)
+
+
 ################ Konfiguration ####################
 SHEET_TITLE = "PullupsSheet"  # skal matche din Google Sheet titel
 DATA_HEADERS = ["username","date","pullups","week_start","week_number"]
@@ -191,8 +216,30 @@ st.title(f"🏋️ Din uge, {user}")
 ws = ensure_user_ws(tab_name)
 df = read_user_df(tab_name)
 
-# All-time total for brugeren
+# --- All time & startdato (beregning) ---
 all_time_total = int(df["pullups"].sum()) if not df.empty else 0
+first_date = None
+if not df.empty and "date" in df.columns:
+    try:
+        first_date = pd.to_datetime(df["date"]).min().date()
+    except Exception:
+        first_date = None
+
+# --- HERO: All time i toppen ---
+st.markdown(f"""
+<div class="hero-card">
+  <div class="hero-left">
+    <div class="hero-label">All time</div>
+    <div class="hero-number">{format_int(all_time_total)}</div>
+    {f'<div class="hero-sub">siden {first_date.isoformat()}</div>' if first_date else ''}
+  </div>
+  <div class="hero-right">
+    <div>Ugemål</div>
+    <div class="chip">{format_int(int(current_goal))}</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
 
 # Quick log (kun for dig selv)
 with st.form("log_pullups"):
@@ -231,14 +278,13 @@ remaining = max(goal - my_week_total, 0)
 days_left = max(1, 7 - today.weekday())  # inkl. i dag
 avg_needed = (remaining + days_left - 1) // days_left  # ceil
 
-# 5 metrics inkl. all-time
-col1, col2, col3, col4, col5 = st.columns(5)
+# 4 metrics (uden All time)
+col1, col2, col3, col4 = st.columns(4)
 col1.metric("I dag", my_day_total)
 col2.metric("Denne uge", my_week_total)
 col3.metric(f"Til {goal}", remaining)
 col4.metric("Behov / dag", avg_needed)
-col5.metric("All time", all_time_total)
-st.progress(min(my_week_total / goal, 1.0))
+
 
 # --- Vis startdato for challenge ---
 first_date = None
