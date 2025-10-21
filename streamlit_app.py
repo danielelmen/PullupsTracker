@@ -134,12 +134,13 @@ def read_settings_df() -> pd.DataFrame:
         df["weekly_goal"] = pd.to_numeric(df["weekly_goal"], errors="coerce").fillna(DEFAULT_WEEKLY_GOAL).astype(int)
     return df
 
-def get_user_goal(username: str) -> int:
+def get_user_goal(username: str) -> tuple[int, bool]:
+    """Returnér (goal, found) — dvs. om brugeren allerede har et mål i settings."""
     df = read_settings_df()
     rec = df[df["username"].str.lower() == username.lower()]
     if rec.empty:
-        return DEFAULT_WEEKLY_GOAL
-    return int(rec.iloc[0]["weekly_goal"])
+        return DEFAULT_WEEKLY_GOAL, False  # Ikke fundet i settings
+    return int(rec.iloc[0]["weekly_goal"]), True
 
 def set_user_goal(username: str, goal: int):
     """Skriv/overskriv målet i _settings (altid frit ændreligt)."""
@@ -165,8 +166,8 @@ def set_user_goal(username: str, goal: int):
 
     st.cache_data.clear()  # ryd læse-caches
 
-################ UI: Målvalg ####################
-current_goal = get_user_goal(user)
+# --- UI: hent mål og vis hint kun første gang ---
+current_goal, goal_found = get_user_goal(user)
 
 with st.sidebar:
     st.markdown("### ⚙️ Indstillinger")
@@ -179,8 +180,8 @@ with st.sidebar:
             st.success(f"Ugemål gemt ({int(new_goal)}).")
             st.rerun()
 
-# Første-gangs hint
-if current_goal == DEFAULT_WEEKLY_GOAL:
+# Vises kun hvis brugeren ikke har noget i settings endnu
+if not goal_found:
     st.info("Tip: Du kan vælge dit ugentlige mål i sidebaren under **Indstillinger**.")
 
 ################ Forside: data & logging ####################
