@@ -327,6 +327,7 @@ with tab1:
     </div>
     """, unsafe_allow_html=True)
 
+    st.write("")  # bare for at lave lidt luft
 
     # Quick log (kun for dig selv)
     with st.form("log_pullups"):
