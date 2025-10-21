@@ -297,7 +297,7 @@ if not goal_found:
 ################ Forside: data & logging ####################
 tab_name = user_tab(user)
 st.title(f"💪 Pullups tracker 💪")
-st.caption("🏋️ Velkommen {user}")
+st.caption(f"🏋️ Velkommen {user}")
 
 tab1, tab2 = st.tabs(["Min uge", "Community"])
 with tab1:
