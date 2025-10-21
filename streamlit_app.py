@@ -39,7 +39,7 @@ st.write(f"Du er logget ind som: {user}")
 ################ Google sheets test
 
 SHEET_TITLE = "PullupsSheet"   # your Google Sheet name
-TAB_NAME    = "overview"            # the tab name
+TAB_NAME    = user            # the tab name
 
 @st.cache_resource
 def get_ws():
@@ -55,7 +55,7 @@ def get_ws():
     sh = gc.open(SHEET_TITLE)
     return sh.worksheet(TAB_NAME)
 
-st.title("🔌 Google Sheets connection test")
+st.title("Pull-up Tracker!")
 
 ws = get_ws()
 
