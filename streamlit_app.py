@@ -3,32 +3,29 @@ import gspread
 import pandas as pd
 from google.oauth2.service_account import Credentials
 import datetime as dt
+import re
 
 ################ Login ####################
 
 users = st.secrets.get("users", {})
 
 def authenticate():
-    """Håndterer login med en sikker og stabil metode."""
     if "authenticated" not in st.session_state:
         st.session_state["authenticated"] = False
     if "username" not in st.session_state:
         st.session_state["username"] = ""
-    
     if not st.session_state["authenticated"]:
         st.title("Log ind")
         username = st.text_input("Brugernavn")
         password = st.text_input("Adgangskode", type="password")
-        
         if st.button("Login"):
             if username in users and users[username] == password:
                 st.session_state["authenticated"] = True
                 st.session_state["username"] = username
                 st.success("Login lykkedes! Appen genindlæses...")
-                st.rerun()  # Tvinger en opdatering af appen
+                st.rerun()
             else:
                 st.error("Forkert brugernavn eller adgangskode")
-        
         st.stop()
 
 authenticate()
@@ -36,13 +33,20 @@ authenticate()
 user = st.session_state["username"]
 st.write(f"Du er logget ind som: {user}")
 
-################ Google sheets test
+################ Google Sheets ####################
 
 SHEET_TITLE = "PullupsSheet"  # skal matche din Google Sheet titel
 HEADERS     = ["username","date","pullups","week_start","week_number"]
 
 def monday_of_week(d: dt.date) -> dt.date:
     return d - dt.timedelta(days=d.weekday())  # mandag=0
+
+def user_tab(username: str) -> str:
+    """Sanitizér brugernavn til et gyldigt fanenavn."""
+    u = username.strip().lower()
+    u = re.sub(r'[^a-z0-9\-]+', '-', u)
+    u = re.sub(r'-{2,}', '-', u).strip('-')[:90]
+    return u or "user"
 
 @st.cache_resource
 def get_client_and_sheet():
@@ -57,13 +61,13 @@ def get_client_and_sheet():
     sh = gc.open(SHEET_TITLE)
     return gc, sh
 
-def get_user_ws(username: str):
-    """Åbn eller opret fanen der matcher brugernavnet."""
+def ensure_user_ws(tab_name: str):
+    """Åbn eller opret fanen (ingen cache her)."""
     _, sh = get_client_and_sheet()
     try:
-        ws = sh.worksheet(username)
+        ws = sh.worksheet(tab_name)
     except gspread.exceptions.WorksheetNotFound:
-        ws = sh.add_worksheet(title=username, rows=1000, cols=10)
+        ws = sh.add_worksheet(title=tab_name, rows=1000, cols=10)
         ws.update("A1", [HEADERS])  # skriv headers første gang
     return ws
 
@@ -73,10 +77,11 @@ def ensure_headers(ws):
         ws.update("A1", [HEADERS])
 
 @st.cache_data(ttl=15)
-def read_user_df(ws):
-    """Læs kun brugerens fane, robust mod tomt ark."""
-    ensure_headers(ws)
-    values = ws.get("A1:E10000")  # eksplicit range er mere stabilt end get_all_records
+def read_user_df(tab_name: str) -> pd.DataFrame:
+    """Cache på STRINGS, ikke worksheet-objekter."""
+    _, sh = get_client_and_sheet()
+    ws = sh.worksheet(tab_name)  # åbnes inde i funktionen
+    values = ws.get("A1:E10000")  # eksplicit range > stabilt
     if not values:
         return pd.DataFrame(columns=HEADERS)
     headers = values[0]
@@ -89,11 +94,11 @@ def read_user_df(ws):
     return df
 
 # ---------- Forside: Kun egne data ----------
-user = st.session_state["username"]
+tab_name = user_tab(user)
 st.title(f"🏋️ Din uge, {user}")
 
-ws = get_user_ws(user)          # <— her låses vi til fanen med brugernavnet
-df = read_user_df(ws)
+ws = ensure_user_ws(tab_name)   # lås til brugerens fane (opret hvis mangler)
+df = read_user_df(tab_name)     # cache læsning baseret på fanenavn (hashbar)
 
 # Quick log (kun for dig selv)
 with st.form("log_pullups"):
@@ -118,7 +123,7 @@ with st.form("log_pullups"):
 today = dt.date.today()
 this_week_start = monday_of_week(today).isoformat()
 
-my_week = pd.DataFrame(columns=df.columns)
+my_week = pd.DataFrame(columns=df.columns if not df.empty else HEADERS)
 my_day_total = 0
 my_week_total = 0
 
