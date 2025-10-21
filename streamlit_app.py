@@ -535,7 +535,7 @@ with tab2:
     st.progress(min(community_pct, 1.0))
 
     # --- Ugentligt leaderboard (denne uge) ---
-    st.subheader("Ugentligt leaderboard")
+    st.subheader("🔥Ugentligt leaderboard🔥")
 
     # lav en 0–100 kolonne til visning
     view = leaderboard.copy()
@@ -567,7 +567,7 @@ with tab2:
 
 
     # --- All-time leaderboard ---
-    st.subheader("All-time leaderboard")
+    st.subheader("🏆All-time leaderboard🏆")
     if not all_df.empty:
         alltime = (all_df.groupby("username", as_index=False)["pullups"]
                           .sum().rename(columns={"pullups":"Total"}))
