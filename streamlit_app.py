@@ -296,10 +296,10 @@ if not goal_found:
 
 ################ Forside: data & logging ####################
 tab_name = user_tab(user)
-st.title(f"💪 Pullups tracker 💪")
+st.title(f"💪 Pull-up Tracker 💪")
 st.caption(f"🏋️ Velkommen {user}")
 
-tab1, tab2 = st.tabs(["Min uge", "Community"])
+tab1, tab2, tab3 = st.tabs(["Min uge", "Community", "Info"])
 with tab1:
     ws = ensure_user_ws(tab_name)
     df = read_user_df(tab_name)
@@ -332,7 +332,7 @@ with tab1:
 
     # Quick log (kun for dig selv)
     with st.form("log_pullups"):
-        qty = st.number_input("Tilføj pullups", min_value=1, step=1)
+        qty = st.number_input("Tilføj pullups", min_value=1, step=5)
         add = st.form_submit_button("Tilføj")
         if add:
             today = dt.date.today()
@@ -403,8 +403,8 @@ with tab1:
             else:
                 st.warning("Den seneste række ser ikke ud til at være din.")
 
-    # --- Ugentlige totaler (all time) ---
-    st.subheader("Ugentlige totaler (all time)")
+    # --- Ugentlige resultater ---
+    st.subheader("Ugentlige resultater")
     if df.empty:
         st.info("Ingen data endnu.")
     else:
@@ -470,7 +470,7 @@ with tab1:
         )
 # ------------- FANEN: Community -------------
 with tab2:
-    st.header("🌍 Community")
+    st.header("Hall of PAIN")
 
     # --- Hent data ---
     tabs = list_user_tabs()
@@ -563,7 +563,7 @@ with tab2:
 
 
     # --- Ugentligt leaderboard (denne uge) ---
-    st.subheader("🔥Ugentligt leaderboard🔥")
+    st.subheader("🔥Ugentligt leaderboard")
 
     # lav en 0–100 kolonne til visning
     view = leaderboard.copy()
@@ -595,7 +595,7 @@ with tab2:
 
 
     # --- All-time leaderboard ---
-    st.subheader("🏆All-time leaderboard🏆")
+    st.subheader("🏆All-time leaderboard")
     if not all_df.empty:
         alltime = (all_df.groupby("username", as_index=False)["pullups"]
                           .sum().rename(columns={"pullups":"Total"}))
@@ -613,3 +613,17 @@ with tab2:
         )
     else:
         st.info("Ingen logs endnu til all-time leaderboardet.")
+
+with tab1:
+    st.header("Challenge")
+    st.write("Sæt dit ugentlige pull-up-mål i menuen til venstre")
+    st.write("Du bestemmer selv, hvordan du vil fordele dem, bare du når i mål inden ugen slutter")
+    st.write("Log dine pull-ups i boksen på forsiden. (Du kan også altid slette det seneste entry ved at klikke på fortryd knappen)")
+    st.write("Se hvor mange du mangler for at nå ugens mål")
+    st.write("Følg din fremgang og streaks uge for uge")
+    st.write("Brug community-fanen til at se, hvordan det går de andre")
+    st.write("")
+    st.write("")
+    st.write("")
+    st.write("")
+    st.header("GET STRONG!")
