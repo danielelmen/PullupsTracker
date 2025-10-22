@@ -380,12 +380,26 @@ with tab1:
     st.progress(progress)
 
 
-    st.subheader("Dine loggede pullups (denne uge)")
-    st.dataframe(
-        my_week[["date","pullups"]].sort_values("date", ascending=False).reset_index(drop=True)
-        if not my_week.empty else pd.DataFrame(columns=["date","pullups"]),
-        use_container_width=True
-    )
+st.subheader("Dine loggede pullups (i dag)")
+
+if my_week.empty:
+    st.dataframe(pd.DataFrame(columns=["date", "pullups"]), use_container_width=True)
+else:
+    # Filtrér til dagens dato
+    today_str = dt.date.today().isoformat()
+    today_logs = my_week[my_week["date"] == today_str]
+
+    if today_logs.empty:
+        st.info("Ingen logs for i dag endnu.")
+    else:
+        st.dataframe(
+            today_logs[["date", "pullups"]]
+            .sort_values("date", ascending=False)
+            .reset_index(drop=True),
+            use_container_width=True,
+            hide_index=True
+        )
+
 
     # --- Slet seneste log ---
     if st.button("🗑️ Fortryd seneste log"):
