@@ -332,7 +332,7 @@ with tab1:
 
     # Quick log (kun for dig selv)
     with st.form("log_pullups"):
-        qty = st.number_input("Tilføj pullups", min_value=1, step=5)
+        qty = st.number_input("Tilføj pullups", min_value=0, step=5)
         add = st.form_submit_button("Tilføj")
         if add:
             today = dt.date.today()
@@ -614,7 +614,7 @@ with tab2:
     else:
         st.info("Ingen logs endnu til all-time leaderboardet.")
 
-with tab1:
+with tab3:
     st.header("Challenge")
     st.write("Sæt dit ugentlige pull-up-mål i menuen til venstre")
     st.write("Du bestemmer selv, hvordan du vil fordele dem, bare du når i mål inden ugen slutter")
