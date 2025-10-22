@@ -372,7 +372,7 @@ with tab1:
     col1.metric("I dag", my_day_total)
     col2.metric("Denne uge", my_week_total)
     col3.metric(f"Til {goal}", remaining)
-    col4.metric("Behov / dag", avg_needed)
+    col4.metric("Resterende pr. dag for denne uge", avg_needed)
 
     # Progress bar under metrics
     progress = (my_week_total / goal) if goal > 0 else 0
