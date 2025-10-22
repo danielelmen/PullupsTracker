@@ -417,6 +417,38 @@ else:
             else:
                 st.warning("Den seneste række ser ikke ud til at være din.")
 
+    # --- 7 dags-metrics (Mandag–Søndag) ---
+    DANISH_DOW = ["Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag", "Søndag"]
+
+    week_start_date = monday_of_week(dt.date.today())                  # mandag (date-objekt)
+    week_days = [week_start_date + dt.timedelta(days=i) for i in range(7)]
+
+    # Byg dagssummer ud fra my_week (som allerede er filtreret til denne uge)
+    if my_week.empty:
+        daily_map = {d: 0 for d in week_days}
+    else:
+        tmp = my_week.copy()
+        tmp["date"] = pd.to_datetime(tmp["date"], errors="coerce").dt.date
+        grouped = tmp.groupby("date", as_index=False)["pullups"].sum()
+        # map dato -> sum
+        daily_map = {d: 0 for d in week_days}
+        for _, r in grouped.iterrows():
+            if r["date"] in daily_map:
+                daily_map[r["date"]] = int(r["pullups"])
+
+    # Render metrics i 7 kolonner
+    cols = st.columns(7)
+    today = dt.date.today()
+    for i, d in enumerate(week_days):
+        label = DANISH_DOW[i]
+        val = daily_map.get(d, 0)
+        delta_txt = "i dag" if d == today else d.strftime("%d/%m")
+        cols[i].metric(label=label, value=val, delta=delta_txt)
+
+    # (valgfrit) En lille total-tekst for hele ugen
+    st.caption(f"Sum (man–søn): {sum(daily_map.values())}")
+
+
     # --- Ugentlige resultater ---
     st.subheader("Ugentlige resultater")
     if df.empty:
