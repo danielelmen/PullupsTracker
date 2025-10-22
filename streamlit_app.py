@@ -442,7 +442,7 @@ else:
     for i, d in enumerate(week_days):
         label = DANISH_DOW[i]
         val = daily_map.get(d, 0)
-        delta_txt = "i dag" if d == today else d.strftime("%d/%m")
+        delta_txt = "i dag" if d == today else None
         cols[i].metric(label=label, value=val, delta=delta_txt)
 
     # (valgfrit) En lille total-tekst for hele ugen
