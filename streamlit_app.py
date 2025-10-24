@@ -10,46 +10,55 @@ from gspread.exceptions import APIError
 
 # --- Cookie helpers (works on old/new Streamlit) ---
 def cookie_get(name: str):
-    # New API
+    # Ny API
     try:
         return st.cookies.get(name)
     except Exception:
         pass
-    # Old experimental API
+    # Gammel experimental API
     try:
         return st.experimental_get_cookie(name)  # type: ignore[attr-defined]
     except Exception:
         return None
 
-def cookie_set(name: str, value: str, *, max_age: int, path="/", secure=True, samesite="Lax"):
-    # New API
+def cookie_set(name: str, value: str, *, max_age: int):
+    # Ny API
     try:
-        return st.cookies.set(name, value, max_age=max_age, path=path, secure=secure, samesite=samesite)
+        return st.cookies.set(
+            name, value, max_age=max_age,
+            path=COOKIE_PATH, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE
+        )
     except Exception:
         pass
-    # Old experimental API
+    # Gammel experimental API
     try:
-        return st.experimental_set_cookie(name, value, max_age=max_age, path=path, secure=secure, samesite=samesite)  # type: ignore[attr-defined]
+        return st.experimental_set_cookie(  # type: ignore[attr-defined]
+            name, value, max_age=max_age,
+            path=COOKIE_PATH, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE
+        )
     except Exception:
         return None
 
-def cookie_delete(name: str, *, path="/"):
-    # New API
+def cookie_delete(name: str):
+    # Ny API
     try:
-        return st.cookies.delete(name, path=path)
+        return st.cookies.delete(name, path=COOKIE_PATH)
     except Exception:
         pass
-    # Old experimental API
+    # Gammel experimental API
     try:
-        return st.experimental_delete_cookie(name, path=path)  # type: ignore[attr-defined]
+        return st.experimental_delete_cookie(name, path=COOKIE_PATH)  # type: ignore[attr-defined]
     except Exception:
         return None
+
 
 
 # --- Remember-me cookies ---
 COOKIE_NAME = "pullups_user"
 COOKIE_MAX_AGE = 60 * 60 * 24 * 14  # 14 dage
-COOKIE_KWARGS = dict(path="/", secure=True, samesite="Lax")
+COOKIE_SECURE = bool(st.secrets.get("cookie_secure", False))  # Lokalt: False, Cloud: True
+COOKIE_SAMESITE = "Lax"
+COOKIE_PATH = "/"
 
 
 def gs_retry(fn, *args, **kwargs):
@@ -251,6 +260,7 @@ def auto_login_from_cookie():
     if cookie_user and cookie_user in users:
         st.session_state["authenticated"] = True
         st.session_state["username"] = cookie_user
+
 
 
 def authenticate():
@@ -479,10 +489,7 @@ with st.sidebar:
 
         # Log ud-knap (sletter cookie og nulstiller session)
         if st.button("Log ud", use_container_width=True, key="logout_btn"):
-            try:
-                cookie_delete(COOKIE_NAME)
-            except Exception:
-                pass
+            cookie_delete(COOKIE_NAME)
             st.session_state["authenticated"] = False
             st.session_state["username"] = ""
             st.rerun()
