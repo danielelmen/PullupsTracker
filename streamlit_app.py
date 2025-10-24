@@ -8,105 +8,6 @@ from typing import List
 import random, time
 from gspread.exceptions import APIError
 
-# --- Remember-me cookies ---
-COOKIE_NAME = "pullups_user"
-COOKIE_MAX_AGE = 60 * 60 * 24 * 14  # 14 dage
-
-# Styr policy via secrets:
-# Lokalt: cookie_secure = false (eller udelad)
-# Cloud (HTTPS/WebView): cookie_secure = true og cookie_samesite = "None"
-COOKIE_SECURE = bool(st.secrets.get("cookie_secure", False))
-COOKIE_SAMESITE = st.secrets.get("cookie_samesite", "Lax" if not COOKIE_SECURE else "None")
-COOKIE_PATH = "/"
-
-def _is_https_host() -> bool:
-    # Streamlit doesn't expose scheme directly; best-effort:
-    # If running on *.streamlit.app (Cloud) we assume HTTPS.
-    host = st.runtime.scriptrunner.get_script_run_ctx().session_info.client.host if hasattr(st.runtime, "scriptrunner") else ""
-    return (".streamlit.app" in str(host)) or ("localhost" not in str(host))
-
-def _cookie_policy():
-    # Local dev (HTTP): use Lax + secure=False
-    # Cloud / HTTPS / WebView: use None + secure=True (works inside iframes / Android app)
-    if _is_https_host():
-        return dict(path="/", secure=True, samesite="None")
-    else:
-        return dict(path="/", secure=False, samesite="Lax")
-
-# Minimal shim for old/new Streamlit versions
-def cookie_get(name: str):
-    try:
-        return st.cookies.get(name)  # ny API
-    except Exception:
-        try:
-            return st.experimental_get_cookie(name)  # gammel API
-        except Exception:
-            return None
-
-def cookie_set(name: str, value: str, *, max_age: int):
-    # Brug policy fra secrets
-    try:
-        st.cookies.set(
-            name, value, max_age=max_age,
-            path=COOKIE_PATH, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE
-        )
-    except Exception:
-        st.experimental_set_cookie(  # type: ignore[attr-defined]
-            name, value, max_age=max_age,
-            path=COOKIE_PATH, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE
-        )
-
-def cookie_delete(name: str):
-    try:
-        st.cookies.delete(name, path=COOKIE_PATH)
-    except Exception:
-        st.experimental_delete_cookie(name, path=COOKIE_PATH)  # type: ignore[attr-defined]
-
-
-# --- Cookie helpers (works on old/new Streamlit) ---
-def cookie_get(name: str):
-    # Ny API
-    try:
-        return st.cookies.get(name)
-    except Exception:
-        pass
-    # Gammel experimental API
-    try:
-        return st.experimental_get_cookie(name)  # type: ignore[attr-defined]
-    except Exception:
-        return None
-
-def cookie_set(name: str, value: str, *, max_age: int):
-    # Ny API
-    try:
-        return st.cookies.set(
-            name, value, max_age=max_age,
-            path=COOKIE_PATH, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE
-        )
-    except Exception:
-        pass
-    # Gammel experimental API
-    try:
-        return st.experimental_set_cookie(  # type: ignore[attr-defined]
-            name, value, max_age=max_age,
-            path=COOKIE_PATH, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE
-        )
-    except Exception:
-        return None
-
-def cookie_delete(name: str):
-    # Ny API
-    try:
-        return st.cookies.delete(name, path=COOKIE_PATH)
-    except Exception:
-        pass
-    # Gammel experimental API
-    try:
-        return st.experimental_delete_cookie(name, path=COOKIE_PATH)  # type: ignore[attr-defined]
-    except Exception:
-        return None
-
-
 
 def gs_retry(fn, *args, **kwargs):
     # Retries ved typiske midlertidige fejl (429/5xx)
@@ -300,16 +201,6 @@ GOAL_MIN, GOAL_MAX = 50, 10000  # enkel sanity range
 ################ Login ####################
 users = st.secrets.get("users", {})
 
-def auto_login_from_cookie():
-    if st.session_state.get("authenticated"):
-        return
-    u = cookie_get(COOKIE_NAME)
-    if u:
-        # If you still want to validate against st.secrets["users"], keep this guard:
-        if u in users:
-            st.session_state["authenticated"] = True
-            st.session_state["username"] = u
-
 
 def authenticate():
     if "authenticated" not in st.session_state:
@@ -331,19 +222,12 @@ def authenticate():
             st.session_state["authenticated"] = True
             st.session_state["username"] = username
 
-            # Sæt cookie hvis 'Husk mig'
-            if remember:
-                cookie_set(COOKIE_NAME, username, max_age=COOKIE_MAX_AGE)
-
-            st.success("Login lykkedes! Appen genindlæses…")
-            st.rerun()
         else:
             st.error("Forkert brugernavn eller adgangskode")
 
     st.stop()  # vis ikke resten, hvis ikke logget ind
 
 
-auto_login_from_cookie()
 
 authenticate()
 user = st.session_state["username"]
