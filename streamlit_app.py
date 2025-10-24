@@ -622,11 +622,20 @@ with tab1:
     avg_needed = (remaining / max(1, days_left)) if current_goal > 0 else 0
     progress = (weekly_total / current_goal) if current_goal > 0 else 0.0
 
+
     # 6) (Valgfrit) Fejr når ugemål nås
     if weekly_total >= current_goal:
         st.success("UGEN ER I HUS! 💥")
         st.balloons()
 
+    # --- All time & startdato (beregning) ---
+    all_time_total = int(df["pullups"].sum()) if not df.empty else 0
+    first_date = None
+    if not df.empty and "date" in df.columns:
+        try:
+            first_date = pd.to_datetime(df["date"]).min().date()
+        except Exception:
+            first_date = None
 
     # --- HERO: All time i toppen ---
     st.markdown(f"""
