@@ -1025,7 +1025,7 @@ with tab2:
                     .reset_index(drop=True))
 
         st.dataframe(
-            board.rename(columns={"username": "Bruger"})[["Bruger", "Total ", "Uge streaks"]],
+            board.rename(columns={"username": "Bruger"})[["Bruger", "Total", "Uge streaks"]],
             use_container_width=True, hide_index=True
         )
     else:
