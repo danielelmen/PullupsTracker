@@ -7,8 +7,46 @@ import re
 from typing import List
 import random, time
 from gspread.exceptions import APIError, WorksheetNotFound
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import pytz
+
+def monday_of(d: pd.Timestamp) -> pd.Timestamp:
+    # Returnér mandag for den uge, som d tilhører
+    return d - pd.Timedelta(days=d.weekday())
+
+def ensure_week_start(df: pd.DataFrame) -> pd.DataFrame:
+    """Sikrer at df har en 'week_start'-kolonne i YYYY-MM-DD (date).
+    Hvis kolonnen allerede findes, coerces til dato; ellers beregnes ud fra 'date'.
+    """
+    tmp = df.copy()
+    if "week_start" in tmp.columns:
+        tmp["week_start"] = pd.to_datetime(tmp["week_start"], errors="coerce")
+    else:
+        # Fald tilbage til 'date' hvis week_start ikke findes
+        tmp["date"] = pd.to_datetime(tmp["date"], errors="coerce")
+        tmp["week_start"] = tmp["date"].apply(monday_of)
+    tmp["week_start"] = tmp["week_start"].dt.date
+    return tmp
+
+def compute_weekly_totals(df: pd.DataFrame, goal: int):
+    """Returnerer liste [(week_start_date, total, reached_bool)] sorteret stigende."""
+    if df.empty:
+        return []
+    tmp = ensure_week_start(df)
+    # Sørg for numerisk pullups
+    tmp["pullups"] = pd.to_numeric(tmp["pullups"], errors="coerce").fillna(0).astype(int)
+    w = tmp.groupby("week_start")["pullups"].sum().sort_index()
+    return [(ws, int(total), total >= goal) for ws, total in w.items()]
+
+def current_streak(weekly_list):
+    """Tæl uger i træk (baglæns) hvor målet er nået."""
+    s = 0
+    for _, _, ok in reversed(weekly_list):
+        if ok:
+            s += 1
+        else:
+            break
+    return s
 
 def gs_retry(fn, *args, **kwargs):
     # Retries ved typiske midlertidige fejl (429/5xx)
@@ -556,14 +594,39 @@ with tab1:
     ws = ensure_user_ws(tab_name)
     df = read_user_df(tab_name)
 
-    # --- All time & startdato (beregning) ---
-    all_time_total = int(df["pullups"].sum()) if not df.empty else 0
-    first_date = None
-    if not df.empty and "date" in df.columns:
-        try:
-            first_date = pd.to_datetime(df["date"]).min().date()
-        except Exception:
-            first_date = None
+    # --------- UI / MIN UGE (PLACÉR I DIN VISNINGSDEL) ---------
+    # Forudsætter at du har sat login/session tidligere:
+    username = st.session_state.get("username", "")
+
+    # 1) Hent alle faner og data (cachede helpers)
+    tab_names = list_user_tabs()
+    all_df = read_all_users_df(tab_names)
+
+    # 2) Filtrér til aktuel bruger
+    df_user = all_df[all_df["username"].str.lower() == username.lower()].copy()
+
+    # 3) Sæt ugemål og beregn streak
+    current_goal = st.session_state.get("weekly_goal", 500)
+
+    weekly = compute_weekly_totals(df_user, current_goal)
+    streak = current_streak(weekly)
+
+    # 4) Beregn denne uges tal til UI
+    tmp = ensure_week_start(df_user)
+    now = pd.Timestamp.now(tz=TZ)            # bruger din TZ = Europe/Copenhagen
+    this_monday = (now - pd.Timedelta(days=now.weekday())).date()
+    weekly_total = int(tmp.loc[tmp["week_start"] == this_monday, "pullups"].sum()) if not tmp.empty else 0
+
+    remaining = max(0, current_goal - weekly_total)
+    days_left = 7 - now.weekday()            # inkl. i dag
+    avg_needed = (remaining / max(1, days_left)) if current_goal > 0 else 0
+    progress = (weekly_total / current_goal) if current_goal > 0 else 0.0
+
+    # 6) (Valgfrit) Fejr når ugemål nås
+    if weekly_total >= current_goal:
+        st.success("UGEN ER I HUS! 💥")
+        st.balloons()
+
 
     # --- HERO: All time i toppen ---
     st.markdown(f"""
@@ -638,12 +701,12 @@ with tab1:
     avg_needed = (remaining + days_left - 1) // days_left  # ceil
 
     # 4 metrics (uden All time)
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("I dag", my_day_total)
     col2.metric("Denne uge", my_week_total)
     col3.metric(f"Til {goal}", remaining)
     col4.metric("Resterende pr. dag for ugen", avg_needed)
-
+    col5.metric("Streak (uger i træk)", streak)
     # Progress bar under metrics
     progress = (my_week_total / goal) if goal > 0 else 0
     progress = max(0.0, min(progress, 1.0))
