@@ -260,9 +260,10 @@ def ensure_user_ws(tab_name: str):
 
 
 def ensure_headers(ws, expected_headers):
-    first_row = ws.row_values(1)
+    first_row = gs_retry(ws.row_values, 1)      # ← retry
     if not first_row or first_row != expected_headers:
-        ws.update("A1", [expected_headers])
+        gs_retry(ws.update, "A1", [expected_headers])  # ← retry
+
 
 def ensure_settings_ws():
     """Opret/_åbn settings-worksheet uden 'locked'. Har migrations-tålmodighed."""
@@ -368,7 +369,7 @@ def set_user_goal(username: str, goal: int):
         g = DEFAULT_WEEKLY_GOAL
     g = max(GOAL_MIN, min(GOAL_MAX, g))
 
-    ws = ensure_settings_ws()  # denne er allerede gs_retry-sikret
+    ws = ensure_settings_ws()
 
     # Hent alle værdier (API-kald) m. retry
     data = gs_retry(ws.get_all_values)
@@ -467,11 +468,29 @@ with tab1:
                 monday_of_week(today).isoformat(),
                 today.isocalendar().week,
             ]
-            ensure_headers(ws, DATA_HEADERS)
-            ws.append_row(row)
-            st.success(f"Tilføjede {qty} for {user}")
-            st.cache_data.clear()
-            st.rerun()
+
+            try:
+                # Sørg for at headers findes, og beskyt alle API-kald
+                ensure_headers(ws, DATA_HEADERS)
+                gs_retry(ws.append_row, row)
+
+                st.success(f"Tilføjede {qty} for {user}")
+
+                # Ryd kun relevante caches (ikke globalt)
+                try:
+                    read_user_df.clear()
+                    read_all_users_df.clear()
+                    list_user_tabs.clear()
+                except Exception:
+                    pass
+
+                st.rerun()
+
+            except gspread.exceptions.APIError:
+                st.warning("Der opstod et midlertidigt problem med Google Sheets. Prøv igen om et øjeblik.")
+            except Exception as e:
+                st.error(f"Uventet fejl under logning: {e}")
+
 
     # Stats for i dag og denne uge
     today = dt.date.today()
@@ -527,19 +546,37 @@ with tab1:
 
         # --- Slet seneste log ---
         if st.button("🗑️ Fortryd seneste log"):
-            all_values = ws.get_all_values()
-            if len(all_values) <= 1:
-                st.info("Ingen rækker at slette endnu.")
-            else:
-                last_row_index = len(all_values)  # 1-baseret i Sheets
-                last_row = all_values[-1]
-                if last_row[0].lower() == user.lower():
-                    ws.delete_rows(last_row_index)
-                    st.success(f"Slettede seneste log ({last_row[1]} – {last_row[2]} reps)")
-                    st.cache_data.clear()
-                    st.rerun()
+            try:
+                # Beskyt API-kald mod midlertidige fejl
+                all_values = gs_retry(ws.get_all_values)
+
+                if len(all_values) <= 1:
+                    st.info("Ingen rækker at slette endnu.")
                 else:
-                    st.warning("Den seneste række ser ikke ud til at være din.")
+                    last_row_index = len(all_values)  # 1-baseret i Sheets
+                    last_row = all_values[-1]
+
+                    # Ekstra sikkerhed: tjek at rækken tilhører brugeren
+                    if last_row and last_row[0].strip().lower() == user.lower():
+                        gs_retry(ws.delete_rows, last_row_index)  # ← retry med backoff
+                        st.success(f"Slettede seneste log ({last_row[1]} – {last_row[2]} reps)")
+
+                        # Ryd kun relevante caches (ikke globalt)
+                        try:
+                            read_user_df.clear()
+                            read_all_users_df.clear()
+                            list_user_tabs.clear()
+                        except Exception:
+                            pass
+
+                        st.rerun()
+                    else:
+                        st.warning("Den seneste række ser ikke ud til at være din.")
+            except gspread.exceptions.APIError:
+                st.error("Google Sheets svarede ikke. Prøv igen om et øjeblik.")
+            except Exception as e:
+                st.error(f"Uventet fejl: {e}")
+
 
         # --- 7 dags-metrics (Mandag–Søndag) ---
         DANISH_DOW = ["Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag", "Søndag"]
