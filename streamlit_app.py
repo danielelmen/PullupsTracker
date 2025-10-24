@@ -997,39 +997,39 @@ with tab2:
     )
 
 
-# --- All-time leaderboard (uden 'Uger') ---
-st.subheader("🏆All-time leaderboard")
-if not all_df.empty:
-    # Grundtal: total pr. bruger
-    totals = (all_df.groupby("username", as_index=False)["pullups"]
-                     .sum().rename(columns={"pullups": "Total"}))
+    # --- All-time leaderboard (uden 'Uger') ---
+    st.subheader("🏆All-time leaderboard")
+    if not all_df.empty:
+        # Grundtal: total pr. bruger
+        totals = (all_df.groupby("username", as_index=False)["pullups"]
+                        .sum().rename(columns={"pullups": "Total"}))
 
-    # Sørg for week_start er sat korrekt til ugens mandag
-    tmp = ensure_week_start(all_df.copy())
+        # Sørg for week_start er sat korrekt til ugens mandag
+        tmp = ensure_week_start(all_df.copy())
 
-    # Beregn uge-streaks pr. bruger
-    goal = st.session_state.get("weekly_goal", 500)
-    streak_rows = []
-    for user, df_u in tmp.groupby("username"):
-        weekly = compute_weekly_totals(df_u, goal)   # [(week_start, total, reached_bool), ...]
-        s = current_streak(weekly)
-        streak_rows.append({"username": user, "Uge streaks": int(s)})
+        # Beregn uge-streaks pr. bruger
+        goal = st.session_state.get("weekly_goal", 500)
+        streak_rows = []
+        for user, df_u in tmp.groupby("username"):
+            weekly = compute_weekly_totals(df_u, goal)   # [(week_start, total, reached_bool), ...]
+            s = current_streak(weekly)
+            streak_rows.append({"username": user, "Uge streaks": int(s)})
 
-    streak_df = pd.DataFrame(streak_rows)
+        streak_df = pd.DataFrame(streak_rows)
 
-    # Merge og sortér (primært efter streaks, sekundært efter total)
-    board = (totals.merge(streak_df, on="username", how="left")
-                  .fillna({"Uge streaks": 0})
-                  .astype({"Uge streaks": int})
-                  .sort_values(["Total", "Uge streaks"], ascending=[False, False])
-                  .reset_index(drop=True))
+        # Merge og sortér (primært efter streaks, sekundært efter total)
+        board = (totals.merge(streak_df, on="username", how="left")
+                    .fillna({"Uge streaks": 0})
+                    .astype({"Uge streaks": int})
+                    .sort_values(["Total", "Uge streaks"], ascending=[False, False])
+                    .reset_index(drop=True))
 
-    st.dataframe(
-        board.rename(columns={"username": "Bruger"})[["Bruger", "Total 💪", "Uge streaks 🔥"]],
-        use_container_width=True, hide_index=True
-    )
-else:
-    st.info("Ingen logs endnu til all-time leaderboardet.")
+        st.dataframe(
+            board.rename(columns={"username": "Bruger"})[["Bruger", "Total 💪", "Uge streaks 🔥"]],
+            use_container_width=True, hide_index=True
+        )
+    else:
+        st.info("Ingen logs endnu til all-time leaderboardet.")
 
 
 with tab3:
