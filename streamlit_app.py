@@ -8,6 +8,44 @@ from typing import List
 import random, time
 from gspread.exceptions import APIError
 
+# --- Cookie helpers (works on old/new Streamlit) ---
+def cookie_get(name: str):
+    # New API
+    try:
+        return st.cookies.get(name)
+    except Exception:
+        pass
+    # Old experimental API
+    try:
+        return st.experimental_get_cookie(name)  # type: ignore[attr-defined]
+    except Exception:
+        return None
+
+def cookie_set(name: str, value: str, *, max_age: int, path="/", secure=True, samesite="Lax"):
+    # New API
+    try:
+        return st.cookies.set(name, value, max_age=max_age, path=path, secure=secure, samesite=samesite)
+    except Exception:
+        pass
+    # Old experimental API
+    try:
+        return st.experimental_set_cookie(name, value, max_age=max_age, path=path, secure=secure, samesite=samesite)  # type: ignore[attr-defined]
+    except Exception:
+        return None
+
+def cookie_delete(name: str, *, path="/"):
+    # New API
+    try:
+        return st.cookies.delete(name, path=path)
+    except Exception:
+        pass
+    # Old experimental API
+    try:
+        return st.experimental_delete_cookie(name, path=path)  # type: ignore[attr-defined]
+    except Exception:
+        return None
+
+
 # --- Remember-me cookies ---
 COOKIE_NAME = "pullups_user"
 COOKIE_MAX_AGE = 60 * 60 * 24 * 14  # 14 dage
@@ -209,7 +247,7 @@ users = st.secrets.get("users", {})
 def auto_login_from_cookie():
     if st.session_state.get("authenticated"):
         return
-    cookie_user = st.experimental_get_cookie(COOKIE_NAME)
+    cookie_user = cookie_get(COOKIE_NAME)
     if cookie_user and cookie_user in users:
         st.session_state["authenticated"] = True
         st.session_state["username"] = cookie_user
@@ -237,9 +275,7 @@ def authenticate():
 
             # Sæt cookie hvis 'Husk mig'
             if remember:
-                st.experimental_set_cookie(
-                    COOKIE_NAME, username, max_age=COOKIE_MAX_AGE, **COOKIE_KWARGS
-                )
+                cookie_set(COOKIE_NAME, username, max_age=COOKIE_MAX_AGE)
 
             st.success("Login lykkedes! Appen genindlæses…")
             st.rerun()
@@ -444,7 +480,7 @@ with st.sidebar:
         # Log ud-knap (sletter cookie og nulstiller session)
         if st.button("Log ud", use_container_width=True, key="logout_btn"):
             try:
-                st.experimental_delete_cookie(COOKIE_NAME, **COOKIE_KWARGS)
+                cookie_delete(COOKIE_NAME)
             except Exception:
                 pass
             st.session_state["authenticated"] = False
