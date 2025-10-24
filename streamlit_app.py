@@ -208,7 +208,7 @@ def authenticate():
     if "username" not in st.session_state:
         st.session_state["username"] = ""
 
-    # Hvis vi allerede er logget ind (fx via cookie), så stop her
+    # Hvis vi allerede er logget ind, så stop her
     if st.session_state["authenticated"]:
         return
 
@@ -418,9 +418,8 @@ with st.sidebar:
         st.markdown("### ⚙️ Indstillinger")
         st.caption(f"Logget ind som **{user}**")
 
-        # Log ud-knap (sletter cookie og nulstiller session)
+        # Log ud-knap (nulstiller session)
         if st.button("Log ud", use_container_width=True, key="logout_btn"):
-            cookie_delete(COOKIE_NAME)
             st.session_state["authenticated"] = False
             st.session_state["username"] = ""
             st.rerun()
