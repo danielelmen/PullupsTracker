@@ -8,6 +8,12 @@ from typing import List
 import random, time
 from gspread.exceptions import APIError
 
+# --- Remember-me cookies ---
+COOKIE_NAME = "pullups_user"
+COOKIE_MAX_AGE = 60 * 60 * 24 * 14  # 14 dage
+COOKIE_KWARGS = dict(path="/", secure=True, samesite="Lax")
+
+
 def gs_retry(fn, *args, **kwargs):
     # Retries ved typiske midlertidige fejl (429/5xx)
     delays = [0.25, 0.5, 1.0, 2.0]  # ~4 forsøg, ca. 3.75s max
@@ -200,24 +206,50 @@ GOAL_MIN, GOAL_MAX = 50, 10000  # enkel sanity range
 ################ Login ####################
 users = st.secrets.get("users", {})
 
+def auto_login_from_cookie():
+    if st.session_state.get("authenticated"):
+        return
+    cookie_user = st.experimental_get_cookie(COOKIE_NAME)
+    if cookie_user and cookie_user in users:
+        st.session_state["authenticated"] = True
+        st.session_state["username"] = cookie_user
+
+
 def authenticate():
     if "authenticated" not in st.session_state:
         st.session_state["authenticated"] = False
     if "username" not in st.session_state:
         st.session_state["username"] = ""
-    if not st.session_state["authenticated"]:
-        st.title("Log ind")
-        username = st.text_input("Brugernavn")
-        password = st.text_input("Adgangskode", type="password")
-        if st.button("Login"):
-            if username in users and users[username] == password:
-                st.session_state["authenticated"] = True
-                st.session_state["username"] = username
-                st.success("Login lykkedes! Appen genindlæses...")
-                st.rerun()
-            else:
-                st.error("Forkert brugernavn eller adgangskode")
-        st.stop()
+
+    # Hvis vi allerede er logget ind (fx via cookie), så stop her
+    if st.session_state["authenticated"]:
+        return
+
+    st.title("Log ind")
+    username = st.text_input("Brugernavn")
+    password = st.text_input("Adgangskode", type="password")
+    remember = st.checkbox("Husk mig i 14 dage", value=True)
+
+    if st.button("Login"):
+        if username in users and users[username] == password:
+            st.session_state["authenticated"] = True
+            st.session_state["username"] = username
+
+            # Sæt cookie hvis 'Husk mig'
+            if remember:
+                st.experimental_set_cookie(
+                    COOKIE_NAME, username, max_age=COOKIE_MAX_AGE, **COOKIE_KWARGS
+                )
+
+            st.success("Login lykkedes! Appen genindlæses…")
+            st.rerun()
+        else:
+            st.error("Forkert brugernavn eller adgangskode")
+
+    st.stop()  # vis ikke resten, hvis ikke logget ind
+
+
+auto_login_from_cookie()
 
 authenticate()
 user = st.session_state["username"]
@@ -405,15 +437,35 @@ def set_user_goal(username: str, goal: int):
 current_goal, goal_found = get_user_goal(user)
 
 with st.sidebar:
-    st.markdown("### ⚙️ Indstillinger")
-    st.write(f"Aktuelt ugemål: **{current_goal}**")
-    with st.expander("Rediger ugemål", expanded=False):
-        new_goal = st.number_input("Ugentligt mål (reps)", min_value=GOAL_MIN, max_value=GOAL_MAX,
-                                   value=int(current_goal), step=10)
-        if st.button("Gem mål"):
-            set_user_goal(user, int(new_goal))
-            st.success(f"Ugemål gemt ({int(new_goal)}).")
+    if st.session_state.get("authenticated"):
+        st.markdown("### ⚙️ Indstillinger")
+        st.caption(f"Logget ind som **{user}**")
+
+        # Log ud-knap (sletter cookie og nulstiller session)
+        if st.button("Log ud", use_container_width=True, key="logout_btn"):
+            try:
+                st.experimental_delete_cookie(COOKIE_NAME, **COOKIE_KWARGS)
+            except Exception:
+                pass
+            st.session_state["authenticated"] = False
+            st.session_state["username"] = ""
             st.rerun()
+
+        st.write(f"Aktuelt ugemål: **{current_goal}**")
+        with st.expander("Rediger ugemål", expanded=False):
+            new_goal = st.number_input(
+                "Ugentligt mål (reps)",
+                min_value=GOAL_MIN, max_value=GOAL_MAX,
+                value=int(current_goal), step=10, key="goal_input"
+            )
+            if st.button("Gem mål", key="save_goal_btn"):
+                set_user_goal(user, int(new_goal))
+                st.success(f"Ugemål gemt ({int(new_goal)}).")
+                st.rerun()
+    else:
+        # (valgfrit) lille hint når man ikke er logget ind
+        st.info("Log ind for at se indstillinger.")
+
 
 # Vises kun hvis brugeren ikke har noget i settings endnu
 if not goal_found:
