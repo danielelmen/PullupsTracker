@@ -6,8 +6,9 @@ import datetime as dt
 import re
 from typing import List
 import random, time
-from gspread.exceptions import APIError
-
+from gspread.exceptions import APIError, WorksheetNotFound
+from datetime import datetime, date
+import pytz
 
 def gs_retry(fn, *args, **kwargs):
     # Retries ved typiske midlertidige fejl (429/5xx)
@@ -190,6 +191,102 @@ def compute_week_label(d: dt.date) -> str:
 ################ Konfiguration ####################
 SHEET_TITLE = "PullupsSheet"  # skal matche din Google Sheet titel
 DATA_HEADERS = ["username","date","pullups","week_start","week_number"]
+SHEET_NAME = st.secrets.get("SHEET_NAME", "PullupsSheet")
+MOTIVATION_TAB = st.secrets.get("MOTIVATION_TAB", "motivation")
+# Valgfrit: fast "seed"-dato så rotationen er stabil uanset app restarts.
+ROTATION_SEED = st.secrets.get("ROTATION_SEED", "2025-01-01")
+TZ = pytz.timezone("Europe/Copenhagen")
+
+# --- Google Sheets klient (cachet) ---
+@st.cache_resource(show_spinner=False)
+def get_gs_client():
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
+    scoped = creds.with_scopes([
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ])
+    return gspread.authorize(scoped)
+
+# --- Hent beskeder (cachet pr. dag for automatisk skift ved midnat) ---
+@st.cache_data(show_spinner=False)
+def load_motivation_messages(_date_key: str) -> list[str]:
+    """
+    _date_key bruges kun til at invaliderer cachen ved dato-skift.
+    """
+    gc = get_gs_client()
+
+    # Brug gs_retry omkring alle netværkskald til Sheets
+    try:
+        sh = gs_retry(gc.open, SHEET_NAME)
+    except APIError:
+        # Hvis alle forsøg fejler, fail-soft (vis standardbanner)
+        return []
+
+    try:
+        ws = gs_retry(sh.worksheet, MOTIVATION_TAB)
+    except WorksheetNotFound:
+        # Fane mangler — fail-soft
+        return []
+    except APIError:
+        return []
+
+    # Forsøg at læse rækker som records
+    try:
+        values = gs_retry(ws.get_all_records, head=1, default_blank="")
+    except APIError:
+        values = []
+
+    df = pd.DataFrame(values)
+
+    if "message" not in df.columns or df.empty:
+        # Fallback: læs ren kolonne 1 hvis ingen header/records
+        try:
+            col = gs_retry(ws.col_values, 1)
+        except APIError:
+            col = []
+        # drop evt. header hvis du har en
+        msgs = [x for x in col if x and str(x).strip().lower() != "message"]
+        return [str(m).strip() for m in msgs if str(m).strip()]
+
+    # filtrér på enabled hvis kolonnen findes
+    if "enabled" in df.columns:
+        df = df[df["enabled"].astype(str).str.upper().isin(["TRUE", "1", "YES"])]
+
+    msgs = [str(m).strip() for m in df["message"].tolist() if str(m).strip()]
+    return msgs
+
+def pick_today_message(messages: list[str]) -> str:
+    if not messages:
+        return "Breaking: Intet nyt… men pullupsne laver ikke sig selv! 💪"
+
+    today_local = datetime.now(TZ).date()
+    seed_date = date.fromisoformat(ROTATION_SEED)
+    days_since = (today_local - seed_date).days
+    idx = days_since % len(messages)
+    return messages[idx]
+
+def render_top_banner(text: str):
+    # kompakt “breaking news”-agtigt banner
+    st.markdown(
+        f"""
+        <div style="
+            background: linear-gradient(90deg, #FEE2E2, #FEF3C7);
+            border: 1px solid #FCA5A5;
+            padding: 10px 12px;
+            border-radius: 10px;
+            font-size: 0.95rem;
+            display: flex; align-items: center; gap: 8px;
+        ">
+          <span style="
+            background:#DC2626; color:white; font-weight:700; 
+            padding: 2px 8px; border-radius: 6px; font-size: 0.80rem;
+            letter-spacing: .5px;
+          ">BREAKING</span>
+          <span style="color:#111827;">{text}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 # Nyt _settings layout uden "locked"
 SETTINGS_SHEET = "_settings"
@@ -448,6 +545,11 @@ if not goal_found:
 tab_name = user_tab(user)
 st.title(f"💪 Pull-up Tracker 💪")
 st.caption(f"🏋️ Velkommen {user}")
+
+# --- Kør banneret ---
+today_key = datetime.now(TZ).strftime("%Y-%m-%d")  # tvinger cache-refresh hver kalenderdag i København
+_messages = load_motivation_messages(today_key)
+render_top_banner(pick_today_message(_messages))
 
 tab1, tab2, tab3 = st.tabs(["Min uge", "Community", "Info"])
 with tab1:
