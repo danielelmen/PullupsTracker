@@ -215,7 +215,6 @@ def authenticate():
     st.title("Log ind")
     username = st.text_input("Brugernavn")
     password = st.text_input("Adgangskode", type="password")
-    remember = st.checkbox("Husk mig i 14 dage", value=True)
 
     if st.button("Login"):
         if username in users and users[username] == password:
