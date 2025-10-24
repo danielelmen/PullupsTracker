@@ -8,6 +8,52 @@ from typing import List
 import random, time
 from gspread.exceptions import APIError
 
+# --- Remember-me cookies ---
+COOKIE_NAME = "pullups_user"
+COOKIE_MAX_AGE = 60 * 60 * 24 * 14  # 14 days
+COOKIE_SECURE = bool(st.secrets.get("cookie_secure", False))  # Lokalt: False, Cloud: True
+COOKIE_SAMESITE = "Lax"
+COOKIE_PATH = "/"
+
+def _is_https_host() -> bool:
+    # Streamlit doesn't expose scheme directly; best-effort:
+    # If running on *.streamlit.app (Cloud) we assume HTTPS.
+    host = st.runtime.scriptrunner.get_script_run_ctx().session_info.client.host if hasattr(st.runtime, "scriptrunner") else ""
+    return (".streamlit.app" in str(host)) or ("localhost" not in str(host))
+
+def _cookie_policy():
+    # Local dev (HTTP): use Lax + secure=False
+    # Cloud / HTTPS / WebView: use None + secure=True (works inside iframes / Android app)
+    if _is_https_host():
+        return dict(path="/", secure=True, samesite="None")
+    else:
+        return dict(path="/", secure=False, samesite="Lax")
+
+# Minimal shim for old/new Streamlit versions
+def cookie_get(name: str):
+    try:
+        return st.cookies.get(name)       # new API
+    except Exception:
+        try:
+            return st.experimental_get_cookie(name)  # old API
+        except Exception:
+            return None
+
+def cookie_set(name: str, value: str, *, max_age: int):
+    policy = _cookie_policy()
+    try:
+        st.cookies.set(name, value, max_age=max_age, **policy)  # new API
+    except Exception:
+        st.experimental_set_cookie(name, value, max_age=max_age, **policy)  # old API
+
+def cookie_delete(name: str):
+    policy = _cookie_policy()
+    try:
+        st.cookies.delete(name, path=policy["path"])  # new API
+    except Exception:
+        st.experimental_delete_cookie(name, path=policy["path"])  # old API
+
+
 # --- Cookie helpers (works on old/new Streamlit) ---
 def cookie_get(name: str):
     # Ny API
@@ -51,14 +97,6 @@ def cookie_delete(name: str):
     except Exception:
         return None
 
-
-
-# --- Remember-me cookies ---
-COOKIE_NAME = "pullups_user"
-COOKIE_MAX_AGE = 60 * 60 * 24 * 14  # 14 dage
-COOKIE_SECURE = bool(st.secrets.get("cookie_secure", False))  # Lokalt: False, Cloud: True
-COOKIE_SAMESITE = "Lax"
-COOKIE_PATH = "/"
 
 
 def gs_retry(fn, *args, **kwargs):
@@ -256,11 +294,14 @@ users = st.secrets.get("users", {})
 def auto_login_from_cookie():
     if st.session_state.get("authenticated"):
         return
-    cookie_user = cookie_get(COOKIE_NAME)
-    if cookie_user and cookie_user in users:
-        st.session_state["authenticated"] = True
-        st.session_state["username"] = cookie_user
-
+    u = cookie_get(COOKIE_NAME)
+    # (Optional) tiny debug line—remove later:
+    st.session_state["_cookie_debug"] = f"cookie={u!r} policy={_cookie_policy()}"
+    if u:
+        # If you still want to validate against st.secrets["users"], keep this guard:
+        if u in users:
+            st.session_state["authenticated"] = True
+            st.session_state["username"] = u
 
 
 def authenticate():
