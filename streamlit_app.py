@@ -5,12 +5,29 @@ from google.oauth2.service_account import Credentials
 import datetime as dt
 import re
 from typing import List
+import random, time
+from gspread.exceptions import APIError
+
+def gs_retry(fn, *args, **kwargs):
+    # Retries ved typiske midlertidige fejl (429/5xx)
+    delays = [0.25, 0.5, 1.0, 2.0]  # ~4 forsøg, ca. 3.75s max
+    for i, d in enumerate([0.0] + delays):
+        try:
+            return fn(*args, **kwargs)
+        except APIError as e:
+            # gspread redacter beskeden, så vi kan ikke parse koden sikkert.
+            # Vi antager midlertidig fejl og prøver igen nogle få gange.
+            if i == len(delays):
+                raise
+            time.sleep(d + random.random()*0.1)
 
 @st.cache_data(ttl=60)
 def list_user_tabs() -> List[str]:
     """Returnér alle data-faner (ekskl. _settings og skjulte)."""
     _, sh = get_client_and_sheet()
-    titles = [ws.title for ws in sh.worksheets()]
+    # <- beskyt API-kaldet med gs_retry
+    worksheets = gs_retry(sh.worksheets)
+    titles = [ws.title for ws in worksheets]
     return [t for t in titles if t != SETTINGS_SHEET and not t.startswith("_")]
 
 @st.cache_data(ttl=15)
@@ -18,31 +35,55 @@ def read_all_users_df(tab_names: List[str]) -> pd.DataFrame:
     """Læs alle brugeres data og returnér ét samlet DF med DATA_HEADERS."""
     if not tab_names:
         return pd.DataFrame(columns=DATA_HEADERS)
+
     frames = []
     _, sh = get_client_and_sheet()
+
     for name in tab_names:
         try:
-            ws = sh.worksheet(name)
-            values = ws.get("A1:E10000")
+            # <- Begge netværkskald beskyttes af retry
+            ws = gs_retry(sh.worksheet, name)
+            values = gs_retry(ws.get, "A1:E10000")
+
             if not values:
                 continue
+
             headers = values[0]
             rows = values[1:]
-            rows = [r + [""]*(len(headers)-len(r)) for r in rows]
+
+            # Normalisér rækker ift. headers-længde
+            rows = [r + [""] * (len(headers) - len(r)) for r in rows]
             rows = [r[:len(headers)] for r in rows]
+
             df_i = pd.DataFrame(rows, columns=headers)
+
             if not df_i.empty:
-                df_i["pullups"] = pd.to_numeric(df_i["pullups"], errors="coerce").fillna(0).astype(int)
-            frames.append(df_i)
-        except Exception:
+                # Sikr kolonner og typer
+                if "pullups" in df_i.columns:
+                    df_i["pullups"] = pd.to_numeric(df_i["pullups"], errors="coerce").fillna(0).astype(int)
+                frames.append(df_i)
+
+        except gspread.exceptions.WorksheetNotFound:
+            # Fanen findes ikke (kan være slettet i mellemtiden) -> spring over
             continue
+        except gspread.exceptions.APIError:
+            # Midlertidig fejl selv efter retries -> spring denne fane over
+            # (alternativ: re-raise hvis du hellere vil fail'e hårdt)
+            continue
+
     if not frames:
         return pd.DataFrame(columns=DATA_HEADERS)
+
     df = pd.concat(frames, ignore_index=True)
+
+    # Udfyld evt. manglende kolonner og bestil kolonne-rækkefølge
     for c in DATA_HEADERS:
         if c not in df.columns:
-            df[c] = "" if c != "pullups" else 0
+            df[c] = 0 if c == "pullups" else ""
+
+    # Returnér kun de forventede kolonner i korrekt orden
     return df[DATA_HEADERS]
+
 
 # --- UI helper & styles ---
 def format_int(n: int) -> str:
@@ -75,41 +116,71 @@ from typing import List
 def list_user_tabs() -> List[str]:
     """Returnér alle data-faner (ekskl. _settings og skjulte)."""
     _, sh = get_client_and_sheet()
-    titles = [ws.title for ws in sh.worksheets()]
+
+    # ← beskyt selve API-kaldet med gs_retry
+    worksheets = gs_retry(sh.worksheets)
+    titles = [ws.title for ws in worksheets]
+
+    # filtrér bort settings og skjulte faner
     return [t for t in titles if t != SETTINGS_SHEET and not t.startswith("_")]
 
-@st.cache_data(ttl=15)
+@st.cache_data(ttl=30)  # evt. lidt længere cache for at skåne API'et
 def read_all_users_df(tab_names: List[str]) -> pd.DataFrame:
     """Læs alle brugeres data og returnér ét samlet DF med samme kolonner som DATA_HEADERS."""
     if not tab_names:
         return pd.DataFrame(columns=DATA_HEADERS)
+
     frames = []
     _, sh = get_client_and_sheet()
+
     for name in tab_names:
         try:
-            ws = sh.worksheet(name)
-            values = ws.get("A1:E10000")
+            # ← Tilføj gs_retry her for at håndtere rate limits / 5xx
+            ws = gs_retry(sh.worksheet, name)
+            values = gs_retry(ws.get, "A1:E10000")
+
             if not values:
                 continue
+
             headers = values[0]
             rows = values[1:]
-            rows = [r + [""]*(len(headers)-len(r)) for r in rows]
+
+            # udfyld manglende celler, så alle rækker har samme længde
+            rows = [r + [""] * (len(headers) - len(r)) for r in rows]
             rows = [r[:len(headers)] for r in rows]
+
             df_i = pd.DataFrame(rows, columns=headers)
-            if not df_i.empty:
-                df_i["pullups"] = pd.to_numeric(df_i["pullups"], errors="coerce").fillna(0).astype(int)
+
+            if not df_i.empty and "pullups" in df_i.columns:
+                df_i["pullups"] = pd.to_numeric(
+                    df_i["pullups"], errors="coerce"
+                ).fillna(0).astype(int)
+
             frames.append(df_i)
-        except Exception:
-            # Ignorér faner der ikke kan læses
+
+        except gspread.exceptions.WorksheetNotFound:
+            # f.eks. hvis fanen er slettet i mellemtiden
             continue
+        except gspread.exceptions.APIError:
+            # midlertidig fejl trods retries -> spring over
+            continue
+        except Exception as e:
+            # andre fejl logges evt. som warning
+            st.warning(f"Fejl ved læsning af '{name}': {e}")
+            continue
+
     if not frames:
         return pd.DataFrame(columns=DATA_HEADERS)
+
     df = pd.concat(frames, ignore_index=True)
+
     # sikkerhed: udfyld manglende kolonner
     for c in DATA_HEADERS:
         if c not in df.columns:
-            df[c] = "" if c != "pullups" else 0
+            df[c] = 0 if c == "pullups" else ""
+
     return df[DATA_HEADERS]
+
 
 def compute_week_label(d: dt.date) -> str:
     iso = d.isocalendar()
@@ -179,11 +250,14 @@ def ensure_user_ws(tab_name: str):
     """Åbn eller opret data-fanen (ingen cache her)."""
     _, sh = get_client_and_sheet()
     try:
-        ws = sh.worksheet(tab_name)
+        # ← beskyt mod midlertidige API-fejl
+        ws = gs_retry(sh.worksheet, tab_name)
     except gspread.exceptions.WorksheetNotFound:
-        ws = sh.add_worksheet(title=tab_name, rows=1000, cols=10)
-        ws.update("A1", [DATA_HEADERS])  # skriv headers første gang
+        # ← også beskyt disse to
+        ws = gs_retry(sh.add_worksheet, title=tab_name, rows=1000, cols=10)
+        gs_retry(ws.update, "A1", [DATA_HEADERS])  # skriv headers første gang
     return ws
+
 
 def ensure_headers(ws, expected_headers):
     first_row = ws.row_values(1)
@@ -193,56 +267,89 @@ def ensure_headers(ws, expected_headers):
 def ensure_settings_ws():
     """Opret/_åbn settings-worksheet uden 'locked'. Har migrations-tålmodighed."""
     _, sh = get_client_and_sheet()
+
     try:
-        ws = sh.worksheet(SETTINGS_SHEET)
+        # Beskyt API-kaldet mod midlertidige fejl
+        ws = gs_retry(sh.worksheet, SETTINGS_SHEET)
     except gspread.exceptions.WorksheetNotFound:
-        ws = sh.add_worksheet(title=SETTINGS_SHEET, rows=100, cols=10)
-        ws.update("A1", [SETTINGS_HEADERS])
+        # Hvis arket ikke findes, opret det
+        ws = gs_retry(sh.add_worksheet, title=SETTINGS_SHEET, rows=100, cols=10)
+        gs_retry(ws.update, "A1", [SETTINGS_HEADERS])
         return ws
 
-    # Hvis arket findes men mangler de rigtige headers, opdatér dem
-    headers = ws.row_values(1)
+    # Hent første række (headers)
+    headers = gs_retry(ws.row_values, 1)
+
+    # Hvis headers ikke matcher, opdatér dem
     if headers != SETTINGS_HEADERS:
-        # Accepter gamle varianter med 'locked' og omskriv til nye headers i minnet
-        ws.update("A1", [SETTINGS_HEADERS])
+        gs_retry(ws.update, "A1", [SETTINGS_HEADERS])
+
     return ws
 
-@st.cache_data(ttl=15)
+
+@st.cache_data(ttl=20)  # evt. en anelse højere end 15 for færre API-kald
 def read_user_df(tab_name: str) -> pd.DataFrame:
     _, sh = get_client_and_sheet()
-    ws = sh.worksheet(tab_name)
-    values = ws.get("A1:E10000")
+    try:
+        ws = gs_retry(sh.worksheet, tab_name)          # API-kald 1 (retry)
+        values = gs_retry(ws.get, "A1:E10000")         # API-kald 2 (retry)
+    except gspread.exceptions.WorksheetNotFound:
+        return pd.DataFrame(columns=DATA_HEADERS)
+    except gspread.exceptions.APIError:
+        # Midlertidig fejl selv efter retries – returnér tomt DF i korrekt format
+        return pd.DataFrame(columns=DATA_HEADERS)
+
     if not values:
         return pd.DataFrame(columns=DATA_HEADERS)
+
     headers = values[0]
     rows = values[1:]
-    rows = [r + [""]*(len(headers)-len(r)) for r in rows]
+
+    # Normalisér rækker ift. headers-længde
+    rows = [r + [""] * (len(headers) - len(r)) for r in rows]
     rows = [r[:len(headers)] for r in rows]
+
     df = pd.DataFrame(rows, columns=headers)
+
+    # Sørg for forventede kolonner & typer
+    for c in DATA_HEADERS:
+        if c not in df.columns:
+            df[c] = 0 if c == "pullups" else ""
+
     if not df.empty:
         df["pullups"] = pd.to_numeric(df["pullups"], errors="coerce").fillna(0).astype(int)
-    return df
 
-@st.cache_data(ttl=60)
+    # Returnér kun i den forventede kolonneorden
+    return df[DATA_HEADERS]
+
+
+@st.cache_data(ttl=120)  # du kan evt. øge TTL, da settings sjældent ændres
 def read_settings_df() -> pd.DataFrame:
     ws = ensure_settings_ws()
-    values = ws.get("A1:C10000")  # nye 3 kolonner
+
+    # ← beskyt selve hentningen af værdier med gs_retry
+    values = gs_retry(ws.get, "A1:C10000")
+
     if not values:
         return pd.DataFrame(columns=SETTINGS_HEADERS)
 
     headers = values[0]
     rows = values[1:]
-    # Migration: hvis der ligger en ældre version med 4 kolonner (inkl. locked),
-    # så trim til de første 3 (username, weekly_goal, updated_at)
+
+    # Migration: håndtér gamle versioner med 'locked' som ekstra kolonne
     if len(headers) >= 3:
-        rows = [r + [""]*(len(headers)-len(r)) for r in rows]
-        # Map/trim til første 3 kolonner
+        rows = [r + [""] * (len(headers) - len(r)) for r in rows]
         rows = [r[:3] for r in rows]
 
     df = pd.DataFrame(rows, columns=SETTINGS_HEADERS)
+
     if not df.empty:
-        df["weekly_goal"] = pd.to_numeric(df["weekly_goal"], errors="coerce").fillna(DEFAULT_WEEKLY_GOAL).astype(int)
+        df["weekly_goal"] = pd.to_numeric(
+            df["weekly_goal"], errors="coerce"
+        ).fillna(DEFAULT_WEEKLY_GOAL).astype(int)
+
     return df
+
 
 def get_user_goal(username: str) -> tuple[int, bool]:
     """Returnér (goal, found) — dvs. om brugeren allerede har et mål i settings."""
@@ -254,9 +361,17 @@ def get_user_goal(username: str) -> tuple[int, bool]:
 
 def set_user_goal(username: str, goal: int):
     """Skriv/overskriv målet i _settings (altid frit ændreligt)."""
-    _, sh = get_client_and_sheet()
-    ws = ensure_settings_ws()
-    data = ws.get_all_values()
+    # (valgfrit) clamp for sanity
+    try:
+        g = int(goal)
+    except Exception:
+        g = DEFAULT_WEEKLY_GOAL
+    g = max(GOAL_MIN, min(GOAL_MAX, g))
+
+    ws = ensure_settings_ws()  # denne er allerede gs_retry-sikret
+
+    # Hent alle værdier (API-kald) m. retry
+    data = gs_retry(ws.get_all_values)
     headers = data[0] if data else SETTINGS_HEADERS
 
     # find eksisterende række
@@ -267,16 +382,25 @@ def set_user_goal(username: str, goal: int):
             break
 
     now_iso = dt.datetime.now().isoformat(timespec="seconds")
-    row = [username, str(int(goal)), now_iso]
+    row = [username, str(g), now_iso]
 
     if idx is None:
-        ws.append_row(row)
+        gs_retry(ws.append_row, row)                 # API-kald m. retry
     else:
-        ws.update(f"A{idx}:C{idx}", [row])
+        gs_retry(ws.update, f"A{idx}:C{idx}", [row]) # API-kald m. retry
 
-    st.cache_data.clear()  # ryd læse-caches
+    # Målrettet cache-rydning (ikke global)
+    try:
+        read_settings_df.clear()
+    except Exception:
+        pass
 
-# --- UI: hent mål og vis hint kun første gang ---
+    # Opdatér session state så UI'er reflekterer det nye mål uden ekstra læs
+    st.session_state["current_goal"] = g
+    st.session_state["goal_user"] = username
+
+
+# --- UI: hent mål og vis hint indtil brugerne har gemt data ---
 current_goal, goal_found = get_user_goal(user)
 
 with st.sidebar:
@@ -292,7 +416,7 @@ with st.sidebar:
 
 # Vises kun hvis brugeren ikke har noget i settings endnu
 if not goal_found:
-    st.info("Tip: Første gang du logger på skal du vælge dit ugentlige mål i sidebaren under **Indstillinger**.")
+    st.info("Hey! Du skal lige vælge dit ugentlige mål i sidebaren under **Indstillinger**.")
 
 ################ Forside: data & logging ####################
 tab_name = user_tab(user)
