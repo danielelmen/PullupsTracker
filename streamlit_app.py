@@ -714,8 +714,8 @@ with tab1:
     col1.metric("I dag", my_day_total)
     col2.metric("Denne uge", my_week_total)
     col3.metric(f"Til {goal}", remaining)
-    col4.metric("Resterende pr. dag for ugen", avg_needed)
-    col5.metric("Ugestreak 🔥)", streak)
+    col4.metric("Resterende pr. dag/ugen", avg_needed)
+    col5.metric("Ugestreak 🔥", streak)
     # Progress bar under metrics
     progress = (my_week_total / goal) if goal > 0 else 0
     progress = max(0.0, min(progress, 1.0))
