@@ -1021,11 +1021,11 @@ if not all_df.empty:
     board = (totals.merge(streak_df, on="username", how="left")
                   .fillna({"Uge streaks": 0})
                   .astype({"Uge streaks": int})
-                  .sort_values(["Uge streaks", "Total"], ascending=[False, False])
+                  .sort_values(["Total", "Uge streaks"], ascending=[False, False])
                   .reset_index(drop=True))
 
     st.dataframe(
-        board.rename(columns={"username": "Bruger"})[["Bruger", "Total", "Uge streaks"]],
+        board.rename(columns={"username": "Bruger"})[["Bruger", "Total 💪", "Uge streaks 🔥"]],
         use_container_width=True, hide_index=True
     )
 else:
