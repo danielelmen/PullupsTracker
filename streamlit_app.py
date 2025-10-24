@@ -10,9 +10,13 @@ from gspread.exceptions import APIError
 
 # --- Remember-me cookies ---
 COOKIE_NAME = "pullups_user"
-COOKIE_MAX_AGE = 60 * 60 * 24 * 14  # 14 days
-COOKIE_SECURE = bool(st.secrets.get("cookie_secure", False))  # Lokalt: False, Cloud: True
-COOKIE_SAMESITE = "Lax"
+COOKIE_MAX_AGE = 60 * 60 * 24 * 14  # 14 dage
+
+# Styr policy via secrets:
+# Lokalt: cookie_secure = false (eller udelad)
+# Cloud (HTTPS/WebView): cookie_secure = true og cookie_samesite = "None"
+COOKIE_SECURE = bool(st.secrets.get("cookie_secure", False))
+COOKIE_SAMESITE = st.secrets.get("cookie_samesite", "Lax" if not COOKIE_SECURE else "None")
 COOKIE_PATH = "/"
 
 def _is_https_host() -> bool:
@@ -32,26 +36,31 @@ def _cookie_policy():
 # Minimal shim for old/new Streamlit versions
 def cookie_get(name: str):
     try:
-        return st.cookies.get(name)       # new API
+        return st.cookies.get(name)  # ny API
     except Exception:
         try:
-            return st.experimental_get_cookie(name)  # old API
+            return st.experimental_get_cookie(name)  # gammel API
         except Exception:
             return None
 
 def cookie_set(name: str, value: str, *, max_age: int):
-    policy = _cookie_policy()
+    # Brug policy fra secrets
     try:
-        st.cookies.set(name, value, max_age=max_age, **policy)  # new API
+        st.cookies.set(
+            name, value, max_age=max_age,
+            path=COOKIE_PATH, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE
+        )
     except Exception:
-        st.experimental_set_cookie(name, value, max_age=max_age, **policy)  # old API
+        st.experimental_set_cookie(  # type: ignore[attr-defined]
+            name, value, max_age=max_age,
+            path=COOKIE_PATH, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE
+        )
 
 def cookie_delete(name: str):
-    policy = _cookie_policy()
     try:
-        st.cookies.delete(name, path=policy["path"])  # new API
+        st.cookies.delete(name, path=COOKIE_PATH)
     except Exception:
-        st.experimental_delete_cookie(name, path=policy["path"])  # old API
+        st.experimental_delete_cookie(name, path=COOKIE_PATH)  # type: ignore[attr-defined]
 
 
 # --- Cookie helpers (works on old/new Streamlit) ---
@@ -295,8 +304,6 @@ def auto_login_from_cookie():
     if st.session_state.get("authenticated"):
         return
     u = cookie_get(COOKIE_NAME)
-    # (Optional) tiny debug line—remove later:
-    st.session_state["_cookie_debug"] = f"cookie={u!r} policy={_cookie_policy()}"
     if u:
         # If you still want to validate against st.secrets["users"], keep this guard:
         if u in users:
