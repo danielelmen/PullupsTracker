@@ -436,7 +436,7 @@ def authenticate():
     st.title("Log ind")
     username = st.text_input("Brugernavn")
     password = st.text_input("Adgangskode", type="password")
-    remember = st.checkbox("Forbliv logget ind på denne enhed", value=True)
+    remember = st.checkbox("Forbliv logget (hvis din enhed tillader det)", value=True)
 
     if st.button("Login"):
         if username in users and users[username] == password:
@@ -654,69 +654,21 @@ def set_user_goal(username: str, goal: int):
     st.session_state["goal_user"] = username
 
 def perform_logout():
-    # Sørg for at komponenten er instansieret i dette run
-    _ = _get_cookie_mgr()
+    _ = _get_cookie_mgr()  # sikrer at komponenten er renderet
 
-    # 1) Nulstil session
     st.session_state["authenticated"] = False
     st.session_state["username"] = ""
 
-    # 2) Slet via komponent (hurtigst muligt)
     try:
         _get_cookie_mgr().delete(COOKIE_NAME)
     except Exception:
         pass
 
-    # 3) JS: slet ALLE varianter (med/uden Domain, flere paths), og reload TOP-vinduet
     st.markdown(
-        f"""
-        <script>
-        (function(){{
-          try {{
-            const name = {json.dumps(COOKIE_NAME)};
-            const past = "Thu, 01 Jan 1970 00:00:00 GMT";
-            const proto = window.location.protocol;
-            const host  = window.location.hostname;
-            const paths = ["/", (window.location.pathname.split("/").slice(0,2).join("/") || "/")];
-            const domains = [undefined, host, "." + host];
-
-            function delCookie(path, domain) {{
-              let parts = [name + "=; Expires=" + past, "Path=" + path, "SameSite=Lax"];
-              if (domain) parts.push("Domain=" + domain);
-              // Secure-flag behøves ikke for sletning, men skader ikke på https
-              if (proto === "https:") parts.push("Secure");
-              document.cookie = parts.join("; ");
-            }}
-
-            for (const p of paths) {{
-              // uden Domain
-              delCookie(p, undefined);
-              // med host og .host
-              for (const d of [host, "."+host]) delCookie(p, d);
-            }}
-
-            // Fjern også evt. ?token fra ældre implementationer
-            try {{
-              const url = new URL(window.top.location.href);
-              url.searchParams.delete("token");
-              // Reload top-vinduet EFTER sletning
-              setTimeout(() => {{
-                window.top.location.replace(url.toString());
-              }}, 50);
-            }} catch(e) {{
-              // fallback hard reload
-              setTimeout(() => window.top.location.reload(), 50);
-            }}
-          }} catch(e) {{}}
-        }})();
-        </script>
-        """,
+        "<script>setTimeout(()=>{ try{window.top.location.reload()}catch(e){location.reload()} }, 80);</script>",
         unsafe_allow_html=True
     )
-
-    # 4) Stop run her – lad browseren reloade (vi undgår at læse en evt. “gammel” cookie i samme run)
     st.stop()
-
 
 # --- UI: hent mål og vis hint indtil brugerne har gemt data ---
 current_goal, goal_found = get_user_goal(user)
