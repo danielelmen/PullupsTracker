@@ -3,3 +3,5 @@ gspread
 google-auth
 pandas
 gspread-dataframe
+
+extra-streamlit-components>=0.1.60
