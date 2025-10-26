@@ -424,7 +424,7 @@ def authenticate():
     token = _get_cookie()
     if token:
         payload = _verify(token)
-        if payload and (u := payload.get("u")) in USERS:
+        if payload and (u := payload.get("u")) in users:
             st.session_state["authenticated"] = True
             st.session_state["username"] = u
             # valgfrit: “rolling” fornyelse
@@ -439,7 +439,7 @@ def authenticate():
     remember = st.checkbox("Forbliv logget ind på denne enhed", value=True)
 
     if st.button("Login"):
-        if username in USERS and USERS[username] == password:
+        if username in users and users[username] == password:
             st.session_state["authenticated"] = True
             st.session_state["username"] = username
 
