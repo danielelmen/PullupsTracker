@@ -355,6 +355,7 @@ def authenticate():
         if username in users and users[username] == password:
             st.session_state["authenticated"] = True
             st.session_state["username"] = username
+            st.rerun()
 
         else:
             st.error("Forkert brugernavn eller adgangskode")
