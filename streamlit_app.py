@@ -18,6 +18,9 @@ AUTH_SECRET = st.secrets.get("auth_secret", "dev-secret-change-me").encode("utf-
 REMEMBER_DAYS = int(st.secrets.get("remember_days", 30))
 COOKIE_NAME = st.secrets.get("cookie_name", "pullups_auth")
 COOKIE_KEY = st.secrets.get("cookie_key", "pullups_cookie_namespace")  # namespace for the component
+
+_COOKIE_MGR = None  # <-- global singleton
+
 # --- Token helpers (HMAC-signeret payload) ---
 def _b64u(x: bytes) -> str:
     import base64
