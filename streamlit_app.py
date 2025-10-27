@@ -299,10 +299,9 @@ def compute_week_label(d: dt.date) -> str:
     return f"{iso.year}-W{iso.week:02d}"
 
 ################ Konfiguration ####################
-SHEET_TITLE = "PullupsSheet"  # skal matche din Google Sheet titel
 DATA_HEADERS = ["username","date","pullups","week_start","week_number"]
-SHEET_NAME = st.secrets.get("SHEET_NAME", "PullupsSheet")
-MOTIVATION_TAB = st.secrets.get("MOTIVATION_TAB", "motivation")
+SHEET_NAME = st.secrets.get("SHEET")
+MOTIVATION_TAB = "motivation"
 # Valgfrit: fast "seed"-dato så rotationen er stabil uanset app restarts.
 ROTATION_SEED = st.secrets.get("ROTATION_SEED", "2025-01-01")
 TZ = pytz.timezone("Europe/Copenhagen")
@@ -496,7 +495,7 @@ def get_client_and_sheet():
         ],
     )
     gc = gspread.authorize(creds)
-    sh = gc.open(SHEET_TITLE)
+    sh = gc.open(SHEET_NAME)
     return gc, sh
 
 def ensure_user_ws(tab_name: str):
@@ -832,17 +831,76 @@ with tab1:
     days_left = max(1, 7 - today.weekday())  # inkl. i dag
     avg_needed = (remaining + days_left - 1) // days_left  # ceil
 
-    # 4 metrics (uden All time)
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("I dag", my_day_total)
-    col2.metric("Denne uge", my_week_total)
-    col3.metric(f"Til {goal}", remaining)
-    col4.metric("Tilbage pr. dag/ugen", avg_needed)
-    col5.metric("Ugestreak 🔥", streak)
-    # Progress bar under metrics
+    # --- Responsive metrics: 3+2 på mobil, 5 på desktop (ingen scroll) ---
+    st.markdown(f"""
+    <style>
+    .metrics-grid {{
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0,1fr)); /* Mobil: 3 kolonner -> 3 øverst, 2 nederst */
+    gap: 10px;
+    margin: 6px 0 10px 0;
+    }}
+    @media (max-width: 380px) {{
+    /* Ekstra smalle mobiler: 2 kolonner for bedre læsbarhed */
+    .metrics-grid {{ grid-template-columns: repeat(2, minmax(0,1fr)); }}
+    }}
+    @media (min-width: 768px) {{
+    /* Tablet/desktop: 5 i én række */
+    .metrics-grid {{ grid-template-columns: repeat(5, minmax(0,1fr)); }}
+    }}
+
+    .metric-card {{
+    border: 1px solid #e5e7eb; border-radius: 14px;
+    background: linear-gradient(135deg, #f8fafc, #f1f5f9);
+    padding: 10px 12px;
+    }}
+    .metric-label {{
+    font-size: 12px; color: #6b7280; line-height: 1.1;
+    }}
+    .metric-value {{
+    /* Skaler pænt fra mobil til desktop */
+    font-size: clamp(18px, 3.5vw, 22px);
+    font-weight: 800; line-height: 1.1; color: #111827;
+    }}
+
+    @media (prefers-color-scheme: dark) {{
+    .metric-card {{ border-color:#334155; background: linear-gradient(135deg,#0b1220,#0f172a); }}
+    .metric-label {{ color:#9ca3af; }}
+    .metric-value {{ color:#e5e7eb; }}
+    }}
+    </style>
+
+    <div class="metrics-grid">
+    <div class="metric-card">
+        <div class="metric-label">I dag</div>
+        <div class="metric-value">{int(my_day_total)}</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">Denne uge</div>
+        <div class="metric-value">{int(my_week_total)}</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">Til {int(goal)}</div>
+        <div class="metric-value">{int(remaining)}</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">Tilbage pr. dag/ugen</div>
+        <div class="metric-value">{int(avg_needed)}</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">Ugestreak 🔥</div>
+        <div class="metric-value">{int(streak)}</div>
+    </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Progress bar under metrics (samme som før)
     progress = (my_week_total / goal) if goal > 0 else 0
     progress = max(0.0, min(progress, 1.0))
     st.progress(progress)
+
+
+
 
 
     st.subheader("Dine loggede pullups (i dag)")
@@ -900,10 +958,10 @@ with tab1:
                 st.error(f"Uventet fejl: {e}")
 
 
-        # --- 7 dags-metrics (Mandag–Søndag) ---
+        # --- 7 dags-metrics (Mandag–Søndag), responsivt grid ---
         DANISH_DOW = ["Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag", "Søndag"]
 
-        week_start_date = monday_of_week(dt.date.today())                  # mandag (date-objekt)
+        week_start_date = monday_of_week(dt.date.today())  # mandag (date-objekt)
         week_days = [week_start_date + dt.timedelta(days=i) for i in range(7)]
 
         # Byg dagssummer ud fra my_week (som allerede er filtreret til denne uge)
@@ -913,19 +971,79 @@ with tab1:
             tmp = my_week.copy()
             tmp["date"] = pd.to_datetime(tmp["date"], errors="coerce").dt.date
             grouped = tmp.groupby("date", as_index=False)["pullups"].sum()
-            # map dato -> sum
             daily_map = {d: 0 for d in week_days}
             for _, r in grouped.iterrows():
                 if r["date"] in daily_map:
                     daily_map[r["date"]] = int(r["pullups"])
 
-        # Render metrics i 7 kolonner
-        cols = st.columns(7)
         today = dt.date.today()
+
+        st.markdown("""
+        <style>
+        .day-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr)); /* Mobil: 3 -> 3+3+1 */
+        gap: 10px;
+        margin: 6px 0 12px 0;
+        }
+        @media (max-width: 380px) {
+        .day-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+        @media (min-width: 640px) {
+        .day-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        }
+        @media (min-width: 1024px) {
+        .day-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+        }
+
+        .day-card {
+        border: 1px solid #e5e7eb;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #f8fafc, #f1f5f9);
+        padding: 10px 12px;
+        display: flex; flex-direction: column; gap: 4px;
+        }
+        .day-card .lab { font-size: 12px; color: #6b7280; line-height: 1.1; }
+        .day-card .date { font-size: 11px; color: #94a3b8; }
+        .day-card .val { font-size: clamp(18px, 3.3vw, 22px); font-weight: 800; color: #111827; }
+
+        .day-card.is-today { border-color: #60a5fa; box-shadow: 0 0 0 2px rgba(96,165,250,0.15) inset; }
+        .day-card.is-weekend .lab { color: #64748b; }
+        .day-card.is-zero .val { opacity: 0.8; }
+
+        @media (prefers-color-scheme: dark) {
+        .day-card { border-color:#334155; background: linear-gradient(135deg,#0b1220,#0f172a); }
+        .day-card .lab { color:#9ca3af; }
+        .day-card .date { color:#64748b; }
+        .day-card .val { color:#e5e7eb; }
+        .day-card.is-today { border-color:#38bdf8; box-shadow: 0 0 0 2px rgba(56,189,248,0.18) inset; }
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+        # Byg kortene (HTML), med highlight af "i dag" og weekend
+        cards_html = []
         for i, d in enumerate(week_days):
             label = DANISH_DOW[i]
             val = daily_map.get(d, 0)
-            cols[i].metric(label=label, value=val)
+            date_str = d.strftime("%d/%m")
+            classes = ["day-card"]
+            if d == dt.date.today():
+                classes.append("is-today")
+            if i >= 5:
+                classes.append("is-weekend")
+            if val == 0:
+                classes.append("is-zero")
+            cards_html.append(
+                f'<div class="{" ".join(classes)}">'
+                f'<div class="lab">{label}</div>'
+                f'<div class="date">{date_str}</div>'
+                f'<div class="val">{val}</div>'
+                f'</div>'
+            )
+
+        st.markdown('<div class="day-grid">' + "".join(cards_html) + '</div>', unsafe_allow_html=True)
+
 
 
 
