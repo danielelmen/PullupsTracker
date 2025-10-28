@@ -11,6 +11,7 @@ from datetime import datetime, date, timedelta, timezone
 import pytz
 import base64, hmac, hashlib, json
 import extra_streamlit_components as stx  # NEW
+from html import escape
 
 
 #Remember login
@@ -80,7 +81,13 @@ def _get_cookie() -> str | None:
         return v.get(COOKIE_NAME)
     return v
 
-
+def get_user_goal(username: str) -> tuple[int, bool]:
+    """Returnér (goal, found) — dvs. om brugeren allerede har et mål i settings."""
+    df = read_settings_df()
+    rec = df[df["username"].str.lower() == username.lower()]
+    if rec.empty:
+        return DEFAULT_WEEKLY_GOAL, False  # Ikke fundet i settings
+    return int(rec.iloc[0]["weekly_goal"]), True
 
 def monday_of(d: pd.Timestamp) -> pd.Timestamp:
     # Returnér mandag for den uge, som d tilhører
@@ -111,9 +118,19 @@ def compute_weekly_totals(df: pd.DataFrame, goal: int):
     return [(ws, int(total), total >= goal) for ws, total in w.items()]
 
 def current_streak(weekly_list):
-    """Tæl uger i træk (baglæns) hvor målet er nået."""
+    """Tæl uger i træk (baglæns) hvor målet er nået, ekskl. igangværende uge."""
+    # Find mandag i den aktuelle uge
+    today = pd.Timestamp.today().normalize()
+    this_week_start = (today - pd.Timedelta(days=today.weekday())).date()
+
+    # Fjern igangværende uge, hvis den ligger sidst i listen
+    if weekly_list and weekly_list[-1][0] == this_week_start:
+        weekly_iter = reversed(weekly_list[:-1])
+    else:
+        weekly_iter = reversed(weekly_list)
+
     s = 0
-    for _, _, ok in reversed(weekly_list):
+    for _, _, ok in weekly_iter:
         if ok:
             s += 1
         else:
@@ -366,7 +383,7 @@ def load_motivation_messages(_date_key: str) -> list[str]:
 
 def pick_today_message(messages: list[str]) -> str:
     if not messages:
-        return "Breaking: Intet nyt… men pullupsne laver ikke sig selv! 💪"
+        return "Breaking: Intet nyt… men pull-upsne laver ikke sig selv! 💪"
 
     today_local = datetime.now(TZ).date()
     seed_date = date.fromisoformat(ROTATION_SEED)
@@ -387,15 +404,17 @@ def render_top_banner(text: str):
             display: flex; align-items: center; gap: 8px;
         ">
           <span style="
-            background:#DC2626; color:white; font-weight:700; 
+            background:#F37D7D; color:black; font-weight:700; 
             padding: 2px 8px; border-radius: 6px; font-size: 0.80rem;
             letter-spacing: .5px;
-          ">Dagens BREAKING</span>
+          ">🔔 Update</span>
           <span style="color:#111827;">{text}</span>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+
 
 # Nyt _settings layout uden "locked"
 SETTINGS_SHEET = "_settings"
@@ -604,14 +623,6 @@ def read_settings_df() -> pd.DataFrame:
     return df
 
 
-def get_user_goal(username: str) -> tuple[int, bool]:
-    """Returnér (goal, found) — dvs. om brugeren allerede har et mål i settings."""
-    df = read_settings_df()
-    rec = df[df["username"].str.lower() == username.lower()]
-    if rec.empty:
-        return DEFAULT_WEEKLY_GOAL, False  # Ikke fundet i settings
-    return int(rec.iloc[0]["weekly_goal"]), True
-
 def set_user_goal(username: str, goal: int):
     """Skriv/overskriv målet i _settings (altid frit ændreligt)."""
     # (valgfrit) clamp for sanity
@@ -703,7 +714,7 @@ if not goal_found:
 
 ################ Forside: data & logging ####################
 tab_name = user_tab(user)
-st.title(f"💪 Pull-up Tracker 💪")
+st.title(f"💪 Pull-ups 💪")
 st.caption(f"🏋️ Velkommen {user}")
 
 # --- Kør banneret ---
@@ -728,9 +739,11 @@ with tab1:
     df_user = all_df[all_df["username"].str.lower() == username.lower()].copy()
 
     # 3) Sæt ugemål og beregn streak
-    current_goal = st.session_state.get("weekly_goal", 500)
+    # Hent mål fra _settings (cachet) og spejl i session for ensartethed i UI
+    current_goal, found = get_user_goal(username)      # din funktion fra før
+    st.session_state["weekly_goal"] = int(current_goal)
 
-    weekly = compute_weekly_totals(df_user, current_goal)
+    weekly = compute_weekly_totals(df_user, int(current_goal))
     streak = current_streak(weekly)
 
     # 4) Beregn denne uges tal til UI
@@ -739,7 +752,7 @@ with tab1:
     this_monday = (now - pd.Timedelta(days=now.weekday())).date()
     weekly_total = int(tmp.loc[tmp["week_start"] == this_monday, "pullups"].sum()) if not tmp.empty else 0
 
-    remaining = max(0, current_goal - weekly_total)
+    remaining = max(0, int(current_goal) - weekly_total)
     days_left = 7 - now.weekday()            # inkl. i dag
     avg_needed = (remaining / max(1, days_left)) if current_goal > 0 else 0
     progress = (weekly_total / current_goal) if current_goal > 0 else 0.0
@@ -747,32 +760,54 @@ with tab1:
 
     # 6) (Valgfrit) Fejr når ugemål nås
     if weekly_total >= current_goal:
-        st.success("UGEN ER I HUS! 💥")
+        st.success("Du er i MÅL! 💥")
         st.balloons()
 
-    # --- All time & startdato (beregning) ---
+    # --- All time ---
     all_time_total = int(df["pullups"].sum()) if not df.empty else 0
-    first_date = None
-    if not df.empty and "date" in df.columns:
-        try:
-            first_date = pd.to_datetime(df["date"]).min().date()
-        except Exception:
-            first_date = None
 
-    # --- HERO: All time i toppen ---
+
+    # Stats for i dag og denne uge
+    today = dt.date.today()
+    this_week_start = monday_of_week(today).isoformat()
+
+    my_week = pd.DataFrame(columns=df.columns if not df.empty else DATA_HEADERS)
+    my_day_total = 0
+    my_week_total = 0
+
+    if not df.empty:
+        my_week = df[df["week_start"] == this_week_start]
+        my_day_total = int(my_week[my_week["date"] == today.isoformat()]["pullups"].sum())
+        my_week_total = int(my_week["pullups"].sum())
+
+    goal = max(int(current_goal), 1)
+    remaining = max(goal - my_week_total, 0)
+    days_left = max(1, 7 - today.weekday())  # inkl. i dag
+    avg_needed = (remaining + days_left - 1) // days_left  # ceil
+
+
+
     st.markdown(f"""
     <div class="hero-card">
-    <div class="hero-left">
+    <div class="hero-block">
         <div class="hero-label">All time</div>
         <div class="hero-number">{format_int(all_time_total)}</div>
-        {f'<div class="hero-sub">siden {first_date.isoformat()}</div>' if first_date else ''}
     </div>
-    <div class="hero-right">
-        <div>Ugemål</div>
-        <div class="chip">{format_int(int(current_goal))}</div>
+
+    <div class="hero-block">
+        <div class="hero-label">I dag</div>
+        <div class="hero-number">{format_int(my_day_total)}</div>
+    </div>
+
+    <div class="hero-block">
+        <div class="hero-label">Ugestreak 🔥</div>
+        <div class="hero-number">{format_int(int(streak))}</div>
     </div>
     </div>
     """, unsafe_allow_html=True)
+
+
+
 
     st.write("")  # bare for at lave lidt luft
 
@@ -813,40 +848,19 @@ with tab1:
                 st.error(f"Uventet fejl under logning: {e}")
 
 
-    # Stats for i dag og denne uge
-    today = dt.date.today()
-    this_week_start = monday_of_week(today).isoformat()
-
-    my_week = pd.DataFrame(columns=df.columns if not df.empty else DATA_HEADERS)
-    my_day_total = 0
-    my_week_total = 0
-
-    if not df.empty:
-        my_week = df[df["week_start"] == this_week_start]
-        my_day_total = int(my_week[my_week["date"] == today.isoformat()]["pullups"].sum())
-        my_week_total = int(my_week["pullups"].sum())
-
-    goal = max(int(current_goal), 1)
-    remaining = max(goal - my_week_total, 0)
-    days_left = max(1, 7 - today.weekday())  # inkl. i dag
-    avg_needed = (remaining + days_left - 1) // days_left  # ceil
-
-    # --- Responsive metrics: 3+2 på mobil, 5 på desktop (ingen scroll) ---
+    #Display af tre elementer
+    # --- Responsive metrics: 3 i én række (2 på meget små mobiler) ---
     st.markdown(f"""
     <style>
     .metrics-grid {{
     display: grid;
-    grid-template-columns: repeat(3, minmax(0,1fr)); /* Mobil: 3 kolonner -> 3 øverst, 2 nederst */
+    grid-template-columns: repeat(3, minmax(0,1fr)); /* 3 kolonner som standard */
     gap: 10px;
     margin: 6px 0 10px 0;
     }}
     @media (max-width: 380px) {{
     /* Ekstra smalle mobiler: 2 kolonner for bedre læsbarhed */
     .metrics-grid {{ grid-template-columns: repeat(2, minmax(0,1fr)); }}
-    }}
-    @media (min-width: 768px) {{
-    /* Tablet/desktop: 5 i én række */
-    .metrics-grid {{ grid-template-columns: repeat(5, minmax(0,1fr)); }}
     }}
 
     .metric-card {{
@@ -858,7 +872,6 @@ with tab1:
     font-size: 12px; color: #6b7280; line-height: 1.1;
     }}
     .metric-value {{
-    /* Skaler pænt fra mobil til desktop */
     font-size: clamp(18px, 3.5vw, 22px);
     font-weight: 800; line-height: 1.1; color: #111827;
     }}
@@ -872,38 +885,23 @@ with tab1:
 
     <div class="metrics-grid">
     <div class="metric-card">
-        <div class="metric-label">I dag</div>
-        <div class="metric-value">{int(my_day_total)}</div>
-    </div>
-    <div class="metric-card">
         <div class="metric-label">Denne uge</div>
         <div class="metric-value">{int(my_week_total)}</div>
     </div>
     <div class="metric-card">
-        <div class="metric-label">Til {int(goal)}</div>
+        <div class="metric-label">Tilbage</div>
         <div class="metric-value">{int(remaining)}</div>
     </div>
     <div class="metric-card">
-        <div class="metric-label">Tilbage pr. dag/ugen</div>
+        <div class="metric-label">Resterende pr/dag</div>
         <div class="metric-value">{int(avg_needed)}</div>
-    </div>
-    <div class="metric-card">
-        <div class="metric-label">Ugestreak 🔥</div>
-        <div class="metric-value">{int(streak)}</div>
     </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # Progress bar under metrics (samme som før)
-    progress = (my_week_total / goal) if goal > 0 else 0
-    progress = max(0.0, min(progress, 1.0))
-    st.progress(progress)
 
 
-
-
-
-    st.subheader("Dine loggede pullups (i dag)")
+    st.subheader("Dagens pull-ups!")
 
     if my_week.empty:
         st.dataframe(pd.DataFrame(columns=["date", "pullups"]), use_container_width=True)
@@ -1090,7 +1088,7 @@ with tab1:
 
             # Pæne labels/kolonner
             weekly["uge"] = weekly.apply(
-                lambda r: f"{int(r['iso_year'])}-W{int(r['iso_week']):02d}" if pd.notna(r["iso_year"]) and pd.notna(r["iso_week"]) else "",
+                lambda r: f"{int(r['iso_year'])} - Week {int(r['iso_week']):02d}" if pd.notna(r["iso_year"]) and pd.notna(r["iso_week"]) else "",
                 axis=1
             )
             weekly["uge_start"] = weekly["week_start"].astype(str)
