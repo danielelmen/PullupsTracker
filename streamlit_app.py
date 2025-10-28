@@ -1207,33 +1207,46 @@ with tab2:
     # --- Ugentligt leaderboard (denne uge) ---
     st.subheader("🔥Ugentligt leaderboard")
 
-    # lav en 0–100 kolonne til visning
+    # Kun brugere som har logget noget (>0) i denne uge
     view = leaderboard.copy()
-    view["FremdriftPct"] = (view["pct"] * 100).clip(lower=0, upper=100)
 
-    st.data_editor(
-        view.rename(columns={
-            "username": "Bruger",
-            "week_total": "Ugens total",
-            "weekly_goal": "Mål",
-            "FremdriftPct": "Fremdrift",
-            "Status": "Status",
-        })[["Bruger", "Ugens total", "Mål", "Fremdrift", "Status"]],
-        use_container_width=True,
-        hide_index=True,
-        disabled=True,
-        column_config={
-            "Ugens total": st.column_config.NumberColumn("Ugens total", format="%d"),
-            "Mål": st.column_config.NumberColumn("Mål", format="%d"),
-            "Fremdrift": st.column_config.ProgressColumn(
-                "Fremdrift",
-                help="Andel af ugemål",
-                format="%.0f%%",   # nu passer det, fordi værdien er 0–100
-                min_value=0,
-                max_value=100,
-            ),
-        }
-    )
+    # Sikr numerisk og håndtér NaN som 0
+    view["week_total"] = pd.to_numeric(view["week_total"], errors="coerce").fillna(0)
+
+    # Filtrér dem med 0 væk og sorter faldende
+    view = view[view["week_total"] > 0].sort_values("week_total", ascending=False)
+
+    # Hvis tomt efter filter: vis info og stop
+    if view.empty:
+        st.info("Ingen har logget pullups endnu i denne uge 💤")
+    else:
+        # lav en 0–100 kolonne til visning
+        view["FremdriftPct"] = (view["pct"] * 100).clip(lower=0, upper=100)
+
+        st.data_editor(
+            view.rename(columns={
+                "username": "Bruger",
+                "week_total": "Antal",
+                "weekly_goal": "Mål",
+                "FremdriftPct": "Fremdrift",
+                "Status": "Status",
+            })[["Bruger", "Antal", "Mål", "Fremdrift", "Status"]],
+            use_container_width=True,
+            hide_index=True,
+            disabled=True,
+            column_config={
+                "Antal": st.column_config.NumberColumn("Antal", format="%d"),
+                "Mål": st.column_config.NumberColumn("Mål", format="%d"),
+                "Fremdrift": st.column_config.ProgressColumn(
+                    "Fremdrift",
+                    help="Andel af ugemål",
+                    format="%.0f%%",
+                    min_value=0,
+                    max_value=100,
+                ),
+            }
+        )
+
 
 
     # --- All-time leaderboard (uden 'Uger') ---
@@ -1273,14 +1286,21 @@ with tab2:
 
 with tab3:
     st.header("Challenge")
-    st.write("Sæt dit ugentlige pull-up-mål i menuen til venstre")
-    st.write("Du bestemmer selv, hvordan du vil fordele dem, bare du når i mål inden ugen slutter")
-    st.write("Log dine pull-ups i boksen på forsiden. (Du kan også altid slette det seneste entry ved at klikke på fortryd knappen)")
-    st.write("Se hvor mange du mangler for at nå ugens mål")
-    st.write("Følg din fremgang og streaks uge for uge")
-    st.write("Brug community-fanen til at se, hvordan det går de andre")
-    st.write("")
-    st.write("")
-    st.write("")
-    st.write("")
-    st.header("GET STRONG!")
+
+    st.markdown("**Mål:** Sæt dit ugentlige pull-up-mål i **sidemenuen** og nå det inden **søndag kl. 23:59**.")
+
+    st.divider()
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("### 1) Log")
+        st.markdown("Log dine pull-ups på **min uge**. Brug **🗑️ Fortryd** for at slette seneste log.")
+    with col2:
+        st.markdown("### 2) Track din fremgang")
+        st.markdown("Se **dagens antal**, **ugens total** og **hvad der mangler** til målet.")
+
+    st.divider()
+
+    st.markdown("### Community")
+    st.markdown("Tjek **Community** for at se, hvordan det går de andre.")
+
+    st.markdown("## GET STRONG 💪")
