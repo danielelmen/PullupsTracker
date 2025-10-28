@@ -1270,11 +1270,18 @@ with tab2:
         # Sørg for week_start er sat korrekt til ugens mandag
         tmp = ensure_week_start(all_df.copy())
 
-        # Beregn uge-streaks pr. bruger
-        goal = st.session_state.get("weekly_goal", 500)
+        # Beregn uge-streaks pr. bruger (brug per-bruger mål fra _settings_)
+        # Byg et map fra settings_df (case-insensitivt), fallback = DEFAULT_WEEKLY_GOAL
+        goals_map = {}
+        if not settings_df.empty and "username" in settings_df and "weekly_goal" in settings_df:
+            sd = settings_df.copy()
+            sd["username_lc"] = sd["username"].astype(str).str.lower()
+            goals_map = dict(zip(sd["username_lc"], sd["weekly_goal"].astype(int)))
+
         streak_rows = []
         for user, df_u in tmp.groupby("username"):
-            weekly = compute_weekly_totals(df_u, goal)   # [(week_start, total, reached_bool), ...]
+            user_goal = goals_map.get(str(user).lower(), DEFAULT_WEEKLY_GOAL)
+            weekly = compute_weekly_totals(df_u, int(user_goal))  # [(week_start, total, reached_bool), ...]
             s = current_streak(weekly)
             streak_rows.append({"username": user, "Uge streaks": int(s)})
 
