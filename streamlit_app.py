@@ -1181,25 +1181,36 @@ with tab2:
     leaderboard["Status"] = leaderboard["pct"].ge(1.0).map({True:"✅ Opnået", False:"⏳ Ikke endnu"})
     leaderboard = leaderboard.sort_values(["pct","week_total"], ascending=[False, False]).reset_index(drop=True)
 
-    # --- Community hero ---
-    community_week_total = int(leaderboard["week_total"].sum())
-    community_week_goal  = int(leaderboard["weekly_goal"].sum())
+    # --- Community hero (kun aktive i denne uge) ---
+    tmp = leaderboard.copy()
+    tmp["week_total"]  = pd.to_numeric(tmp["week_total"], errors="coerce").fillna(0)
+    tmp["weekly_goal"] = pd.to_numeric(tmp["weekly_goal"], errors="coerce").fillna(0)
+
+    active = tmp[tmp["week_total"] > 0]  # kun dem der er gået i gang
+
+    community_week_total = int(active["week_total"].sum())   # samme som all-time sum da 0 ikke tæller, men mere tydeligt
+    community_week_goal  = int(active["weekly_goal"].sum())  # kun mål for aktive
     community_pct        = 0 if community_week_goal == 0 else community_week_total / community_week_goal
+
+    # (valgfrit) vis kun aktive deltagere i chippen
+    active_participants = len(active)
 
     st.markdown(f"""
     <div class="hero-card" style="margin-top:8px;">
-      <div class="hero-left">
+    <div class="hero-left">
         <div class="hero-label">Denne uge ({compute_week_label(today)})</div>
         <div class="hero-number">{format_int(community_week_total)} / {format_int(community_week_goal)}</div>
         <div class="hero-sub">{int(community_pct*100)}% af fælles ugemål</div>
-      </div>
-      <div class="hero-right">
+    </div>
+    <div class="hero-right">
         <div>👥 Deltagere</div>
-        <div class="chip">{len(participants)}</div>
-      </div>
+        <div class="chip">{active_participants}</div>
+    </div>
     </div>
     """, unsafe_allow_html=True)
+
     st.progress(min(community_pct, 1.0))
+
 
 
 
