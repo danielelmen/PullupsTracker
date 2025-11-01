@@ -150,69 +150,6 @@ def gs_retry(fn, *args, **kwargs):
                 raise
             time.sleep(d + random.random()*0.1)
 
-@st.cache_data(ttl=60)
-def list_user_tabs() -> List[str]:
-    """Returnér alle data-faner (ekskl. _settings og skjulte)."""
-    _, sh = get_client_and_sheet()
-    # <- beskyt API-kaldet med gs_retry
-    worksheets = gs_retry(sh.worksheets)
-    titles = [ws.title for ws in worksheets]
-    return [t for t in titles if t != SETTINGS_SHEET and not t.startswith("_")]
-
-@st.cache_data(ttl=15)
-def read_all_users_df(tab_names: List[str]) -> pd.DataFrame:
-    """Læs alle brugeres data og returnér ét samlet DF med DATA_HEADERS."""
-    if not tab_names:
-        return pd.DataFrame(columns=DATA_HEADERS)
-
-    frames = []
-    _, sh = get_client_and_sheet()
-
-    for name in tab_names:
-        try:
-            # <- Begge netværkskald beskyttes af retry
-            ws = gs_retry(sh.worksheet, name)
-            values = gs_retry(ws.get, "A1:E10000")
-
-            if not values:
-                continue
-
-            headers = values[0]
-            rows = values[1:]
-
-            # Normalisér rækker ift. headers-længde
-            rows = [r + [""] * (len(headers) - len(r)) for r in rows]
-            rows = [r[:len(headers)] for r in rows]
-
-            df_i = pd.DataFrame(rows, columns=headers)
-
-            if not df_i.empty:
-                # Sikr kolonner og typer
-                if "pullups" in df_i.columns:
-                    df_i["pullups"] = pd.to_numeric(df_i["pullups"], errors="coerce").fillna(0).astype(int)
-                frames.append(df_i)
-
-        except gspread.exceptions.WorksheetNotFound:
-            # Fanen findes ikke (kan være slettet i mellemtiden) -> spring over
-            continue
-        except gspread.exceptions.APIError:
-            # Midlertidig fejl selv efter retries -> spring denne fane over
-            # (alternativ: re-raise hvis du hellere vil fail'e hårdt)
-            continue
-
-    if not frames:
-        return pd.DataFrame(columns=DATA_HEADERS)
-
-    df = pd.concat(frames, ignore_index=True)
-
-    # Udfyld evt. manglende kolonner og bestil kolonne-rækkefølge
-    for c in DATA_HEADERS:
-        if c not in df.columns:
-            df[c] = 0 if c == "pullups" else ""
-
-    # Returnér kun de forventede kolonner i korrekt orden
-    return df[DATA_HEADERS]
-
 
 # --- UI helper & styles ---
 def format_int(n: int) -> str:
@@ -241,6 +178,7 @@ st.markdown("""
 # -------- Community helpers --------
 from typing import List
 
+#Blok3
 @st.cache_data(ttl=60)
 def list_user_tabs() -> List[str]:
     """Returnér alle data-faner (ekskl. _settings og skjulte)."""
@@ -253,6 +191,7 @@ def list_user_tabs() -> List[str]:
     # filtrér bort settings og skjulte faner
     return [t for t in titles if t != SETTINGS_SHEET and not t.startswith("_")]
 
+#Blok4
 @st.cache_data(ttl=30)  # evt. lidt længere cache for at skåne API'et
 def read_all_users_df(tab_names: List[str]) -> pd.DataFrame:
     """Læs alle brugeres data og returnér ét samlet DF med samme kolonner som DATA_HEADERS."""
@@ -266,7 +205,7 @@ def read_all_users_df(tab_names: List[str]) -> pd.DataFrame:
         try:
             # ← Tilføj gs_retry her for at håndtere rate limits / 5xx
             ws = gs_retry(sh.worksheet, name)
-            values = gs_retry(ws.get, "A1:E10000")
+            values = gs_retry(ws.get, "A1:F10000")
 
             if not values:
                 continue
@@ -316,7 +255,7 @@ def compute_week_label(d: dt.date) -> str:
     return f"{iso.year}-W{iso.week:02d}"
 
 ################ Konfiguration ####################
-DATA_HEADERS = ["username","date","pullups","week_start","week_number"]
+DATA_HEADERS = ["username","date","pullups","week_start","week_number","logged_at"]
 SHEET_NAME = st.secrets.get("SHEET")
 MOTIVATION_TAB = "motivation"
 # Valgfrit: fast "seed"-dato så rotationen er stabil uanset app restarts.
@@ -325,38 +264,38 @@ TZ = pytz.timezone("Europe/Copenhagen")
 
 # --- Google Sheets klient (cachet) ---
 @st.cache_resource(show_spinner=False)
-def get_gs_client():
+def get_client_and_sheet():
+    # Autoriser én gang pr. process
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
     scoped = creds.with_scopes([
         "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
+        "https://www.googleapis.com/auth/drive",
     ])
-    return gspread.authorize(scoped)
+    gc = gspread.authorize(scoped)
+
+    # Åbn selve regnearket med retry (kan fejle ved 429/5xx)
+    sh = gs_retry(gc.open, SHEET_NAME)
+    return gc, sh
+
 
 # --- Hent beskeder (cachet pr. dag for automatisk skift ved midnat) ---
+#Blok6
 @st.cache_data(show_spinner=False)
 def load_motivation_messages(_date_key: str) -> list[str]:
     """
-    _date_key bruges kun til at invaliderer cachen ved dato-skift.
+    _date_key bruges kun til cache-invalidation ved dato-skift.
     """
-    gc = get_gs_client()
+    # Få både klient og sheet fra den kanoniske resource-funktion
+    _, sh = get_client_and_sheet()
 
     # Brug gs_retry omkring alle netværkskald til Sheets
     try:
-        sh = gs_retry(gc.open, SHEET_NAME)
-    except APIError:
-        # Hvis alle forsøg fejler, fail-soft (vis standardbanner)
-        return []
-
-    try:
         ws = gs_retry(sh.worksheet, MOTIVATION_TAB)
     except WorksheetNotFound:
-        # Fane mangler — fail-soft
         return []
     except APIError:
         return []
 
-    # Forsøg at læse rækker som records
     try:
         values = gs_retry(ws.get_all_records, head=1, default_blank="")
     except APIError:
@@ -370,16 +309,14 @@ def load_motivation_messages(_date_key: str) -> list[str]:
             col = gs_retry(ws.col_values, 1)
         except APIError:
             col = []
-        # drop evt. header hvis du har en
         msgs = [x for x in col if x and str(x).strip().lower() != "message"]
         return [str(m).strip() for m in msgs if str(m).strip()]
 
-    # filtrér på enabled hvis kolonnen findes
     if "enabled" in df.columns:
         df = df[df["enabled"].astype(str).str.upper().isin(["TRUE", "1", "YES"])]
 
-    msgs = [str(m).strip() for m in df["message"].tolist() if str(m).strip()]
-    return msgs
+    return [str(m).strip() for m in df["message"].tolist() if str(m).strip()]
+
 
 def pick_today_message(messages: list[str]) -> str:
     if not messages:
@@ -504,18 +441,6 @@ def user_tab(username: str) -> str:
     u = re.sub(r'-{2,}', '-', u).strip('-')[:90]
     return u or "user"
 
-@st.cache_resource
-def get_client_and_sheet():
-    creds = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"],
-        scopes=[
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ],
-    )
-    gc = gspread.authorize(creds)
-    sh = gc.open(SHEET_NAME)
-    return gc, sh
 
 def ensure_user_ws(tab_name: str):
     """Åbn eller opret data-fanen (ingen cache her)."""
@@ -558,13 +483,13 @@ def ensure_settings_ws():
 
     return ws
 
-
+#Blok8
 @st.cache_data(ttl=20)  # evt. en anelse højere end 15 for færre API-kald
 def read_user_df(tab_name: str) -> pd.DataFrame:
     _, sh = get_client_and_sheet()
     try:
         ws = gs_retry(sh.worksheet, tab_name)          # API-kald 1 (retry)
-        values = gs_retry(ws.get, "A1:E10000")         # API-kald 2 (retry)
+        values = gs_retry(ws.get, "A1:F10000")         # API-kald 2 (retry)
     except gspread.exceptions.WorksheetNotFound:
         return pd.DataFrame(columns=DATA_HEADERS)
     except gspread.exceptions.APIError:
@@ -594,7 +519,7 @@ def read_user_df(tab_name: str) -> pd.DataFrame:
     # Returnér kun i den forventede kolonneorden
     return df[DATA_HEADERS]
 
-
+#Blok9
 @st.cache_data(ttl=120)  # du kan evt. øge TTL, da settings sjældent ændres
 def read_settings_df() -> pd.DataFrame:
     ws = ensure_settings_ws()
@@ -817,12 +742,14 @@ with tab1:
         add = st.form_submit_button("Tilføj")
         if add:
             today = dt.date.today()
+            logged_at = datetime.now(TZ).isoformat(timespec="seconds")  # lokal tid m. offset, fx 2025-11-01T14:23:55+01:00
             row = [
                 user,
                 today.isoformat(),
                 int(qty),
                 monday_of_week(today).isoformat(),
                 today.isocalendar().week,
+                logged_at,                     # <-- NY
             ]
 
             try:
@@ -904,19 +831,30 @@ with tab1:
     st.subheader("Dagens pull-ups!")
 
     if my_week.empty:
-        st.dataframe(pd.DataFrame(columns=["date", "pullups"]), use_container_width=True)
+        st.dataframe(pd.DataFrame(columns=["tid", "pullups"]), use_container_width=True)
     else:
-        # Filtrér til dagens dato
+        # Filtrér til dagens dato (som før)
         today_str = dt.date.today().isoformat()
-        today_logs = my_week[my_week["date"] == today_str]
+        today_logs = my_week[my_week["date"] == today_str].copy()
 
         if today_logs.empty:
             st.info("Ingen logs for i dag endnu.")
         else:
+            # Parse tidsstempel; håndtér at gamle rækker kan være tomme
+            # utc=True gør parsing robust (bevarer offset, konverterer til UTC internt)
+            t = pd.to_datetime(today_logs.get("logged_at"), errors="coerce", utc=True)
+
+            # Konverter til lokal tid (Europe/Copenhagen) og formater HH:MM
+            local_t = t.dt.tz_convert(TZ)
+            today_logs["tid"] = local_t.dt.strftime("%H:%M").fillna("—")
+
+            # Sortér nyeste først; NaT (gamle rækker uden logged_at) nederst
+            today_logs = today_logs.assign(_t=t).sort_values("_t", ascending=False)
+
             st.dataframe(
-                today_logs[["date", "pullups"]]
-                .sort_values("date", ascending=False)
-                .reset_index(drop=True),
+                today_logs[["tid", "pullups"]]
+                    .rename(columns={"pullups": "antal"})
+                    .reset_index(drop=True),
                 use_container_width=True,
                 hide_index=True
             )
@@ -1225,7 +1163,7 @@ with tab2:
     view["week_total"] = pd.to_numeric(view["week_total"], errors="coerce").fillna(0)
 
     # Filtrér dem med 0 væk og sorter faldende
-    view = view[view["week_total"] > 0].sort_values("week_total", ascending=False)
+    view = view[view["week_total"] > 0].sort_values("pct", ascending=False)
 
     # Hvis tomt efter filter: vis info og stop
     if view.empty:
